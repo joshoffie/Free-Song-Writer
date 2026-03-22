@@ -570,16 +570,6 @@ function exportPDF() {
     doc.text(state.currentSong.title || 'Untitled', margin, y);
     y += 32;
 
-    // Detected key
-    const used = collectUsedChords();
-    const key = detectKey(used);
-    if (key) {
-        doc.setFont('helvetica','normal');
-        doc.setFontSize(10);
-        doc.setTextColor(150);
-        doc.text('Key: ' + key, margin, y);
-        y += 16;
-    }
     doc.setTextColor(0);
 
     state.currentSong.lines.forEach(line => {
