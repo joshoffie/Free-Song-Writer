@@ -10,7 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -549,6 +549,8 @@ function switchMobilePanel(panel) {
 // ═══ PDF EXPORT ═══
 function exportPDF() {
     if (!state.currentSong) return;
+    if (!window.jspdf) { showModal({icon:'⚠️', title:'PDF Unavailable', message:'PDF library failed to load. Check your internet connection and refresh the page.', confirmText:'OK', onConfirm:()=>{}}); return; }
+    try {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ unit:'pt', format:'letter' });
     const W = doc.internal.pageSize.getWidth();
@@ -691,6 +693,7 @@ function exportPDF() {
     // Download
     const filename = (state.currentSong.title || 'song').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'song';
     doc.save(filename + '.pdf');
+    } catch(err) { console.error('PDF export error:', err); showModal({icon:'⚠️', title:'PDF Export Failed', message:err.message, confirmText:'OK', onConfirm:()=>{}}); }
 }
 
 function init() {
