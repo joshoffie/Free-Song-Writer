@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenChord — Free Songwriting App</title>
+    <title>freetabsforever — Free Songwriting App</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
@@ -184,6 +184,98 @@
         ::-webkit-scrollbar-track { background:transparent; }
         ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
         ::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
+
+        /* ═══ MOBILE ═══ */
+        #mobile-nav { display:none; }
+
+        @media (max-width: 768px) {
+            :root { --navbar-h:48px; --editor-font-size:14px; }
+
+            /* Bottom tab bar */
+            #mobile-nav {
+                display:flex; position:fixed; bottom:0; left:0; right:0; z-index:50;
+                background:var(--surface); border-top:1px solid var(--border);
+                height:56px; align-items:center; justify-content:space-around;
+                padding-bottom:env(safe-area-inset-bottom, 0px);
+            }
+            .mob-tab {
+                display:flex; flex-direction:column; align-items:center; gap:2px;
+                background:none; border:none; color:var(--text-dim); font-size:10px;
+                font-family:var(--font-ui); cursor:pointer; padding:6px 16px;
+                border-radius:8px; transition:color 0.15s;
+            }
+            .mob-tab svg { width:22px; height:22px; }
+            .mob-tab.active { color:var(--tab-active); }
+            .mob-tab:hover { color:var(--text-muted); }
+
+            /* Auth screen mobile */
+            .auth-logo { font-size:32px; }
+            .auth-subtitle { font-size:14px; padding:0 24px; text-align:center; }
+            .auth-btn { padding:12px 24px; font-size:14px; }
+
+            /* Navbar shrink */
+            #navbar { padding:0 10px; gap:8px; }
+            .nav-logo { font-size:16px; }
+            .nav-divider { display:none; }
+            #song-title-input { font-size:14px; padding:4px 8px; min-width:0; }
+            .nav-save-indicator { display:none; }
+            .nav-btn { padding:5px 10px; font-size:11px; }
+            #save-btn { display:none; }
+            .user-avatar { width:28px; height:28px; font-size:12px; }
+
+            /* 3-panel → stacked full-screen, controlled by JS class */
+            #app-body { position:relative; flex:1; overflow:hidden; padding-bottom:56px; }
+            #sidebar {
+                position:absolute; inset:0; z-index:10;
+                width:100%; min-width:100%;
+                display:none; /* hidden by default on mobile */
+            }
+            #sidebar.mob-visible { display:flex; }
+            #editor {
+                position:absolute; inset:0; z-index:10;
+                display:flex; /* visible by default */
+            }
+            #editor.mob-hidden { display:none; }
+            #chord-palette {
+                position:absolute; inset:0; z-index:10;
+                width:100%; min-width:100%;
+                display:none;
+            }
+            #chord-palette.mob-visible { display:flex; }
+
+            /* Editor toolbar: scrollable on mobile */
+            #editor-toolbar { padding:6px 10px; gap:6px; overflow-x:auto; flex-wrap:nowrap; white-space:nowrap; }
+            .toolbar-btn { flex-shrink:0; font-size:11px; padding:4px 8px; }
+            #editor-scroll { padding:12px 10px 80px 10px; }
+
+            /* Tab blocks: ensure horizontal scroll */
+            .tab-body { padding:8px 10px; }
+            .tab-block-header { padding:6px 8px; flex-wrap:wrap; gap:4px; }
+            .tab-symbols-bar { padding:4px 8px; gap:3px; overflow-x:auto; flex-wrap:nowrap; }
+            .tab-sym-btn { flex-shrink:0; padding:3px 6px; font-size:10px; }
+
+            /* Chord palette full screen on mobile */
+            #chord-palette.mob-visible { border-left:none; }
+            .palette-header { padding:12px; }
+
+            /* Song items: show delete always on mobile (no hover) */
+            .song-item-delete { display:flex; }
+
+            /* Config banner smaller */
+            .config-banner { font-size:11px; padding:6px 10px; }
+            .config-banner code { font-size:10px; }
+
+            /* Line pairs: tighter on mobile */
+            .chord-area { min-height:18px; }
+            .lyric-line { font-size:14px; }
+        }
+
+        @media (max-width: 480px) {
+            .nav-logo { font-size:14px; }
+            .auth-logo { font-size:26px; }
+            .auth-subtitle { font-size:12px; }
+            .mob-tab { padding:6px 10px; }
+        }
     </style>
 </head>
 <body>
@@ -219,6 +311,11 @@
         </div>
         <div id="chord-palette"><div class="palette-header">Chord Palette</div><div id="chord-palette-content"></div></div>
     </div>
+    <div id="mobile-nav">
+        <button class="mob-tab active" data-panel="editor" id="mob-tab-editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Editor</span></button>
+        <button class="mob-tab" data-panel="sidebar" id="mob-tab-songs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Songs</span></button>
+        <button class="mob-tab" data-panel="chord-palette" id="mob-tab-chords"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Chords</span></button>
+    </div>
 </div>
 <div class="save-toast" id="save-toast">Saved</div>
 
@@ -226,15 +323,7 @@
 (function(){
 'use strict';
 
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE",
-  authDomain: "freetabsforever.firebaseapp.com",
-  projectId: "freetabsforever",
-  storageBucket: "freetabsforever.firebasestorage.app",
-  messagingSenderId: "1025078181302",
-  appId: "1:1025078181302:web:2a6c6238c3c77e2c2a1517",
-  measurementId: "G-VHD2ZM4MDL"
-};
+const FIREBASE_CONFIG = { apiKey:"AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE", authDomain:"freetabsforever.firebaseapp.com", projectId:"freetabsforever", storageBucket:"freetabsforever.firebasestorage.app", messagingSenderId:"1025078181302", appId:"1:1025078181302:web:2a6c6238c3c77e2c2a1517" };
 const firebaseConfigured = FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY';
 let auth, db;
 const EDITOR_PAD = 4, TAB_COLS = 28, TAB_STRINGS = ['e','B','G','D','A','E'];
@@ -343,6 +432,31 @@ function tabUndo(line) { const h=getTabHist(line); if(h.ptr<=0) return false; h.
 function tabRedo(line) { const h=getTabHist(line); if(h.ptr>=h.stack.length-1) return false; h.ptr++; line.data=JSON.parse(JSON.stringify(h.stack[h.ptr])); return true; }
 
 // ═══ INIT ═══
+// ═══ MOBILE NAV ═══
+function initMobileNav() {
+    const nav = document.getElementById('mobile-nav');
+    if (!nav) return;
+    nav.querySelectorAll('.mob-tab').forEach(tab => {
+        tab.addEventListener('click', () => switchMobilePanel(tab.dataset.panel));
+    });
+}
+
+function switchMobilePanel(panel) {
+    const sidebar = document.getElementById('sidebar');
+    const editor = document.getElementById('editor');
+    const palette = document.getElementById('chord-palette');
+    // Reset all
+    sidebar.classList.remove('mob-visible');
+    editor.classList.add('mob-hidden');
+    palette.classList.remove('mob-visible');
+    // Show selected
+    if (panel === 'sidebar') sidebar.classList.add('mob-visible');
+    else if (panel === 'chord-palette') palette.classList.add('mob-visible');
+    else editor.classList.remove('mob-hidden'); // editor is default
+    // Update tab active state
+    document.querySelectorAll('.mob-tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
+}
+
 function init() {
     if (firebaseConfigured) { firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
     else { document.getElementById('config-banner').style.display='flex'; enterApp(null); }
@@ -357,6 +471,7 @@ function init() {
     document.getElementById('insert-section-btn').addEventListener('click',insertSection);
     document.getElementById('global-undo-btn').addEventListener('click', globalUndo);
     document.getElementById('global-redo-btn').addEventListener('click', globalRedo);
+    initMobileNav();
     document.addEventListener('keydown', globalKeydown);
     document.addEventListener('mouseup', ()=>{ state._mouseSelecting=false; });
     // Fallback mouse-move selection on editor container (catches drags across contenteditable boundaries)
@@ -416,8 +531,8 @@ async function saveSong(){ if(!state.currentSong||!state.currentSongId)return; c
 function cleanForSave(song){const c=JSON.parse(JSON.stringify(song));(c.lines||[]).forEach(l=>{delete l._slurPicking;});return c;}
 function scheduleSave(){ clearTimeout(state.saveTimeout); document.getElementById('save-indicator').textContent='Unsaved changes'; document.getElementById('save-indicator').classList.remove('saved'); state.saveTimeout=setTimeout(saveSong,2000); scheduleUndoSnapshot(); }
 function showSaveToast(){ document.getElementById('save-indicator').textContent='Saved'; document.getElementById('save-indicator').classList.add('saved'); const t=document.getElementById('save-toast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
-async function selectSong(id){ state.currentSongId=id; if(state.user&&firebaseConfigured&&db){try{const d=await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get();state.currentSong=d.exists?d.data():null;}catch(e){state.currentSong=null;}} else{const r=localStorage.getItem('openchord_songs');state.currentSong=(r?JSON.parse(r):{})[id]||null;} if(state.currentSong){state.currentSong.lines=(state.currentSong.lines||[]).map(l=>{if(!l.type)l.type='lyrics';if(l.type==='tab'&&!l.slurs)l.slurs=[];return l;});document.getElementById('song-title-input').value=state.currentSong.title||'';renderEditor();updateQuickChords();seedUndoStack();} renderSidebar(); }
-function createNewSong(){ const id='song_'+Date.now()+'_'+Math.random().toString(36).substr(2,6); state.currentSong={title:'Untitled Song',lines:[{type:'lyrics',lyrics:'',chords:[]}],updatedAt:Date.now()}; state.currentSongId=id; state.songs.unshift({id,title:'Untitled Song',updatedAt:Date.now(),preview:''}); document.getElementById('song-title-input').value='Untitled Song'; renderEditor();renderSidebar();saveSong();seedUndoStack(); setTimeout(()=>focusLine(0,0),50); }
+async function selectSong(id){ state.currentSongId=id; if(state.user&&firebaseConfigured&&db){try{const d=await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get();state.currentSong=d.exists?d.data():null;}catch(e){state.currentSong=null;}} else{const r=localStorage.getItem('openchord_songs');state.currentSong=(r?JSON.parse(r):{})[id]||null;} if(state.currentSong){state.currentSong.lines=(state.currentSong.lines||[]).map(l=>{if(!l.type)l.type='lyrics';if(l.type==='tab'&&!l.slurs)l.slurs=[];return l;});document.getElementById('song-title-input').value=state.currentSong.title||'';renderEditor();updateQuickChords();seedUndoStack();} renderSidebar(); if(window.innerWidth<=768) switchMobilePanel('editor'); }
+function createNewSong(){ const id='song_'+Date.now()+'_'+Math.random().toString(36).substr(2,6); state.currentSong={title:'Untitled Song',lines:[{type:'lyrics',lyrics:'',chords:[]}],updatedAt:Date.now()}; state.currentSongId=id; state.songs.unshift({id,title:'Untitled Song',updatedAt:Date.now(),preview:''}); document.getElementById('song-title-input').value='Untitled Song'; renderEditor();renderSidebar();saveSong();seedUndoStack(); if(window.innerWidth<=768) switchMobilePanel('editor'); setTimeout(()=>focusLine(0,0),50); }
 async function deleteSong(id){ if(!confirm('Delete this song?'))return; if(state.user&&firebaseConfigured&&db){try{await db.collection('users').doc(state.user.uid).collection('songs').doc(id).delete();}catch(e){}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};delete s[id];localStorage.setItem('openchord_songs',JSON.stringify(s));} state.songs=state.songs.filter(s=>s.id!==id); if(state.currentSongId===id){state.currentSongId=null;state.currentSong=null;if(state.songs.length)selectSong(state.songs[0].id);else renderEditorEmpty();} renderSidebar(); }
 function onTitleChange(){ if(state.currentSong){state.currentSong.title=document.getElementById('song-title-input').value;scheduleSave();} }
 
