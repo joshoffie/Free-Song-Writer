@@ -51,10 +51,17 @@
         .nav-spacer { flex:1; }
         .nav-save-indicator { color:var(--text-muted); font-size:13px; }
         .nav-save-indicator.saved { color:var(--accent); }
-        .nav-btn { padding:7px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:13px; font-family:var(--font-ui); cursor:pointer; }
+        .nav-btn { padding:7px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:13px; font-family:var(--font-ui); cursor:pointer; transition:all 0.3s ease; }
         .nav-btn:hover { background:var(--surface-hover); }
         .nav-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
         .nav-btn.primary:hover { background:var(--accent-hover); }
+        #save-btn { position:relative; min-width:72px; overflow:hidden; }
+        #save-btn.saving { pointer-events:none; opacity:0.85; }
+        #save-btn.saved-state { background:transparent; border-color:var(--accent); color:var(--accent); padding:5px 12px; font-size:12px; min-width:60px; }
+        #save-btn.saved-state:hover { background:rgba(35,134,54,0.1); }
+        @keyframes spin-save { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+        .save-spinner { display:inline-block; width:13px; height:13px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin-save 0.6s linear infinite; vertical-align:middle; }
+        #save-btn.saved-state .save-spinner { border-color:rgba(35,134,54,0.3); border-top-color:var(--accent); }
         .user-avatar { width:32px; height:32px; border-radius:50%; background:var(--accent-blue); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; cursor:pointer; }
 
         /* LAYOUT */
@@ -770,13 +777,13 @@ async function loadSongs(){ if(state.user&&firebaseConfigured&&db){try{const s=a
 function getPreview(d){ if(!d||!d.lines)return''; for(const l of d.lines){if(l.type==='tab')continue;const t=(l.lyrics||'').trim();if(t&&!/^\[.+\]$/.test(t))return t.substring(0,60);} return''; }
 async function saveSong(force){
     if(!state.currentSong||!state.currentSongId) return;
-    if(!force && !state._dirty) return; // skip no-op saves
+    if(!force && !state._dirty) return;
     clearTimeout(state.saveTimeout);
+    const btn=document.getElementById('save-btn');
+    btn.classList.add('saving'); btn.classList.remove('saved-state'); btn.innerHTML='<span class="save-spinner"></span>';
     state.currentSong.updatedAt=Date.now();
     state.currentSong.title=document.getElementById('song-title-input').value||'Untitled';
-    // Always save to localStorage as local backup (fast, free, offline-safe)
     try{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};s[state.currentSongId]=cleanForSave(state.currentSong);localStorage.setItem('openchord_songs',JSON.stringify(s));}catch(e){}
-    // Then sync to Firestore if connected
     try{if(state.user&&firebaseConfigured&&db){await db.collection('users').doc(state.user.uid).collection('songs').doc(state.currentSongId).set(cleanForSave(state.currentSong));}}catch(e){console.error('Save:',e);}
     state._dirty=false;
     showSaveToast();
@@ -800,8 +807,8 @@ function cleanForSave(song){
     });
     return c;
 }
-function scheduleSave(){ clearTimeout(state.saveTimeout); state._dirty=true; document.getElementById('save-indicator').textContent='Unsaved changes'; document.getElementById('save-indicator').classList.remove('saved'); state.saveTimeout=setTimeout(saveSong,180000); scheduleUndoSnapshot(); }
-function showSaveToast(){ document.getElementById('save-indicator').textContent='Saved'; document.getElementById('save-indicator').classList.add('saved'); const t=document.getElementById('save-toast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
+function scheduleSave(){ clearTimeout(state.saveTimeout); state._dirty=true; document.getElementById('save-indicator').textContent='Unsaved changes'; document.getElementById('save-indicator').classList.remove('saved'); const btn=document.getElementById('save-btn'); btn.classList.remove('saving','saved-state'); btn.innerHTML='Save'; state.saveTimeout=setTimeout(saveSong,180000); scheduleUndoSnapshot(); }
+function showSaveToast(){ document.getElementById('save-indicator').textContent='Saved'; document.getElementById('save-indicator').classList.add('saved'); const btn=document.getElementById('save-btn'); btn.classList.remove('saving'); btn.classList.add('saved-state'); btn.innerHTML='✓ Saved'; const t=document.getElementById('save-toast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
 async function selectSong(id){ if(state._dirty) await saveSong(true); state.currentSongId=id; if(state.user&&firebaseConfigured&&db){try{const d=await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get();state.currentSong=d.exists?d.data():null;}catch(e){state.currentSong=null;}} else{const r=localStorage.getItem('openchord_songs');state.currentSong=(r?JSON.parse(r):{})[id]||null;} if(state.currentSong){state.currentSong.lines=(state.currentSong.lines||[]).map(l=>{if(!l.type)l.type='lyrics';if(l.type==='tab'){if(!l.data&&l.tabData){try{l.data=JSON.parse(l.tabData);}catch(e){l.data=makeEmptyTabData();}delete l.tabData;}if(!l.data)l.data=makeEmptyTabData();if(!l.slurs&&l.slurData){try{l.slurs=JSON.parse(l.slurData);}catch(e){l.slurs=[];}delete l.slurData;}if(!l.slurs)l.slurs=[];if(!l.tuning)l.tuning=[...TAB_STRINGS];}return l;});document.getElementById('song-title-input').value=state.currentSong.title||'';renderEditor();updateQuickChords();seedUndoStack();} renderSidebar(); if(window.innerWidth<=768) switchMobilePanel('editor'); }
 function createNewSong(){ const id='song_'+Date.now()+'_'+Math.random().toString(36).substr(2,6); state.currentSong={title:'Untitled Song',lines:[{type:'lyrics',lyrics:'',chords:[]}],updatedAt:Date.now()}; state.currentSongId=id; state.songs.unshift({id,title:'Untitled Song',updatedAt:Date.now(),preview:''}); document.getElementById('song-title-input').value='Untitled Song'; renderEditor();renderSidebar();saveSong();seedUndoStack(); if(window.innerWidth<=768) switchMobilePanel('editor'); setTimeout(()=>focusLine(0,0),50); }
 function deleteSong(id){
