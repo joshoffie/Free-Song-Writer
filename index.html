@@ -256,9 +256,13 @@
             }
             #chord-palette.mob-visible { display:flex; }
 
-            /* Editor toolbar: scrollable on mobile */
-            #editor-toolbar { padding:6px 10px; gap:6px; overflow-x:auto; flex-wrap:nowrap; white-space:nowrap; }
-            .toolbar-btn { flex-shrink:0; font-size:11px; padding:4px 8px; }
+            /* Editor toolbar: compact on mobile */
+            #editor-toolbar { padding:6px 8px; gap:4px; flex-wrap:wrap; justify-content:center; }
+            .toolbar-btn { font-size:11px; padding:4px 8px; }
+            .toolbar-btn svg { width:12px; height:12px; }
+            .toolbar-btn .btn-label { display:none; }
+            .toolbar-sep { height:16px; }
+            .toolbar-btn.pdf-btn b { font-size:11px; }
             #editor-scroll { padding:12px 10px 80px 10px; }
 
             /* Tab blocks: ensure horizontal scroll */
@@ -347,12 +351,12 @@
         <div id="sidebar"><div class="sidebar-header"><h3>Songs</h3><button class="sidebar-new-btn" id="new-song-btn" title="New Song">+</button></div><div id="song-list"></div></div>
         <div id="editor">
             <div id="editor-toolbar">
-                <button class="toolbar-btn" id="insert-tab-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="2" x2="15" y2="2"/><line x1="1" y1="5" x2="15" y2="5"/><line x1="1" y1="8" x2="15" y2="8"/><line x1="1" y1="11" x2="15" y2="11"/><line x1="1" y1="14" x2="15" y2="14"/></svg>Insert Tab</button>
+                <button class="toolbar-btn" id="insert-tab-btn" title="Insert Tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="2" x2="15" y2="2"/><line x1="1" y1="5" x2="15" y2="5"/><line x1="1" y1="8" x2="15" y2="8"/><line x1="1" y1="11" x2="15" y2="11"/><line x1="1" y1="14" x2="15" y2="14"/></svg><span class="btn-label">Insert Tab</span></button>
                 <div class="toolbar-sep"></div>
-                <button class="toolbar-btn" id="insert-section-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><line x1="4" y1="7" x2="12" y2="7"/></svg>Section</button>
+                <button class="toolbar-btn" id="insert-section-btn" title="Section"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><line x1="4" y1="7" x2="12" y2="7"/></svg><span class="btn-label">Section</span></button>
                 <div style="flex:1"></div>
-                <button class="toolbar-btn undo-redo-btn" id="global-undo-btn" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h9a3 3 0 0 1 0 6H9"/><polyline points="6 5 3 8 6 11"/></svg>Undo</button>
-                <button class="toolbar-btn undo-redo-btn" id="global-redo-btn" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 8H4a3 3 0 0 0 0 6h3"/><polyline points="10 5 13 8 10 11"/></svg>Redo</button>
+                <button class="toolbar-btn undo-redo-btn" id="global-undo-btn" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h9a3 3 0 0 1 0 6H9"/><polyline points="6 5 3 8 6 11"/></svg><span class="btn-label">Undo</span></button>
+                <button class="toolbar-btn undo-redo-btn" id="global-redo-btn" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 8H4a3 3 0 0 0 0 6h3"/><polyline points="10 5 13 8 10 11"/></svg><span class="btn-label">Redo</span></button>
                 <div class="toolbar-sep"></div>
                 <button class="toolbar-btn pdf-btn" id="export-pdf-btn" title="Export as PDF"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h6l4 4v10H2V1z"/><polyline points="10 1 10 5 14 5"/></svg><b>PDF</b></button>
             </div>
@@ -711,6 +715,26 @@ function init() {
     initMobileNav();
     document.addEventListener('keydown', globalKeydown);
     document.addEventListener('mouseup', ()=>{ state._mouseSelecting=false; });
+    // Click below content to add a new line and start typing
+    document.getElementById('editor-scroll').addEventListener('click', e=>{
+        if(!state.currentSong) return;
+        const content=document.getElementById('editor-content');
+        // Only trigger if click is directly on the scroll area or below all content
+        if(e.target!==e.currentTarget && content.contains(e.target)) return;
+        const rect=content.getBoundingClientRect();
+        if(e.clientY > rect.bottom || (e.target===e.currentTarget && e.clientY > rect.top)){
+            const lines=state.currentSong.lines;
+            // If last line is already empty, just focus it
+            const last=lines[lines.length-1];
+            if(last && last.type==='lyrics' && !last.lyrics && !(last.chords&&last.chords.length)){
+                focusLine(lines.length-1, 0); return;
+            }
+            lines.push({type:'lyrics',lyrics:'',chords:[]});
+            renderEditor();
+            setTimeout(()=>focusLine(lines.length-1, 0), 20);
+            scheduleSave();
+        }
+    });
     // Save on tab close / browser close / phone switch
     window.addEventListener('beforeunload', ()=>{ if(state._dirty) saveSong(true); });
     document.addEventListener('visibilitychange', ()=>{ if(document.hidden && state._dirty) saveSong(true); });
