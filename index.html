@@ -276,6 +276,40 @@
             .auth-subtitle { font-size:12px; }
             .mob-tab { padding:6px 10px; }
         }
+
+        /* ═══ CUSTOM MODAL ═══ */
+        .modal-overlay {
+            position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,0.6);
+            display:flex; align-items:center; justify-content:center;
+            opacity:0; transition:opacity 0.15s; backdrop-filter:blur(4px);
+        }
+        .modal-overlay.visible { opacity:1; }
+        .modal-box {
+            background:var(--surface); border:1px solid var(--border); border-radius:12px;
+            padding:28px 28px 20px; min-width:320px; max-width:400px; width:90vw;
+            box-shadow:0 16px 48px rgba(0,0,0,0.4); transform:scale(0.95); transition:transform 0.15s;
+        }
+        .modal-overlay.visible .modal-box { transform:scale(1); }
+        .modal-icon { font-size:28px; margin-bottom:12px; }
+        .modal-title { font-size:17px; font-weight:600; color:var(--text); margin-bottom:6px; }
+        .modal-msg { font-size:14px; color:var(--text-muted); line-height:1.5; margin-bottom:20px; }
+        .modal-input {
+            width:100%; padding:10px 12px; border-radius:6px; border:1px solid var(--border);
+            background:var(--bg); color:var(--text); font-size:15px; font-family:var(--font-ui);
+            outline:none; margin-bottom:20px;
+        }
+        .modal-input:focus { border-color:var(--accent-blue); }
+        .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+        .modal-btn {
+            padding:9px 20px; border-radius:6px; border:1px solid var(--border);
+            background:var(--surface-hover); color:var(--text-muted); font-size:14px;
+            font-family:var(--font-ui); cursor:pointer; font-weight:500; transition:all 0.1s;
+        }
+        .modal-btn:hover { background:var(--surface-active); color:var(--text); }
+        .modal-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+        .modal-btn.primary:hover { background:var(--accent-hover); }
+        .modal-btn.danger { background:rgba(248,81,73,0.12); border-color:var(--danger); color:var(--danger); }
+        .modal-btn.danger:hover { background:rgba(248,81,73,0.25); }
     </style>
 </head>
 <body>
@@ -424,6 +458,53 @@ function updateUndoButtons() {
     if (rb) rb.disabled = redoStack.length === 0;
 }
 
+// ═══ CUSTOM MODAL ═══
+function showModal({icon, title, message, inputVal, placeholder, confirmText, confirmClass, onConfirm, onCancel}) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    let inputEl = null;
+    overlay.innerHTML = '<div class="modal-box">' +
+        (icon ? '<div class="modal-icon">'+icon+'</div>' : '') +
+        '<div class="modal-title">'+title+'</div>' +
+        (message ? '<div class="modal-msg">'+message+'</div>' : '') +
+        (inputVal !== undefined ? '<input class="modal-input" type="text" value="'+esc(inputVal)+'"'+(placeholder?' placeholder="'+esc(placeholder)+'"':'')+' spellcheck="false">' : '') +
+        '<div class="modal-actions">' +
+        '<button class="modal-btn cancel-btn">Cancel</button>' +
+        '<button class="modal-btn '+(confirmClass||'primary')+' confirm-btn">'+(confirmText||'OK')+'</button>' +
+        '</div></div>';
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    inputEl = overlay.querySelector('.modal-input');
+    if (inputEl) { inputEl.focus(); inputEl.select(); }
+
+    function close(result) {
+        overlay.classList.remove('visible');
+        setTimeout(() => overlay.remove(), 160);
+        return result;
+    }
+
+    overlay.querySelector('.cancel-btn').addEventListener('click', () => {
+        close(); if (onCancel) onCancel();
+    });
+    overlay.querySelector('.confirm-btn').addEventListener('click', () => {
+        const val = inputEl ? inputEl.value : true;
+        close(); if (onConfirm) onConfirm(val);
+    });
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) { close(); if (onCancel) onCancel(); }
+    });
+    // Enter / Escape
+    function onKey(e) {
+        if (e.key === 'Enter') { e.preventDefault(); const val = inputEl ? inputEl.value : true; close(); overlay.removeEventListener('keydown', onKey); if (onConfirm) onConfirm(val); }
+        if (e.key === 'Escape') { close(); overlay.removeEventListener('keydown', onKey); if (onCancel) onCancel(); }
+    }
+    overlay.addEventListener('keydown', onKey);
+    // Focus trap
+    overlay.querySelector('.confirm-btn').focus();
+    if (inputEl) inputEl.focus();
+}
+
 // Tab-level undo/redo (kept for per-block undo inside tab toolbar)
 const tabHistory = new WeakMap();
 function getTabHist(line) { if(!tabHistory.has(line)) tabHistory.set(line,{stack:[JSON.parse(JSON.stringify(line.data))],ptr:0}); return tabHistory.get(line); }
@@ -522,7 +603,15 @@ function signIn(){ if(!firebaseConfigured)return; auth.signInWithPopup(new fireb
 function signOut(){ if(firebaseConfigured&&auth) auth.signOut(); state.user=null;state.songs=[];state.currentSongId=null;state.currentSong=null; document.getElementById('main-app').style.display='none'; document.getElementById('auth-screen').style.display='flex'; }
 function onAuthStateChanged(u){ if(u) enterApp(u); else{ document.getElementById('auth-screen').style.display='flex'; document.getElementById('main-app').style.display='none'; } }
 function enterApp(u){ state.user=u; document.getElementById('auth-screen').style.display='none'; document.getElementById('main-app').style.display='flex'; const av=document.getElementById('user-avatar'); if(u&&u.photoURL) av.innerHTML='<img src="'+u.photoURL+'" style="width:32px;height:32px;border-radius:50%">'; else if(u) av.textContent=(u.displayName||u.email||'?')[0].toUpperCase(); else{av.textContent='L';av.title='Local mode';} loadSongs(); renderChordPalette(); }
-function toggleUserMenu(){ if(firebaseConfigured&&state.user&&confirm('Sign out?')) signOut(); }
+function toggleUserMenu(){
+    if(!firebaseConfigured||!state.user) return;
+    showModal({
+        icon:'👋', title:'Sign out?',
+        message:'You\'ll need to sign in again to access your cloud-synced songs.',
+        confirmText:'Sign Out', confirmClass:'danger',
+        onConfirm: signOut
+    });
+}
 
 // ═══ STORAGE ═══
 async function loadSongs(){ if(state.user&&firebaseConfigured&&db){try{const s=await db.collection('users').doc(state.user.uid).collection('songs').orderBy('updatedAt','desc').get();state.songs=s.docs.map(d=>({id:d.id,title:d.data().title||'Untitled',updatedAt:d.data().updatedAt,preview:getPreview(d.data())}));}catch(e){console.error(e);}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};state.songs=Object.entries(s).map(([id,d])=>({id,title:d.title||'Untitled',updatedAt:d.updatedAt||0,preview:getPreview(d)}));state.songs.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));} renderSidebar(); if(state.songs.length>0&&!state.currentSongId) selectSong(state.songs[0].id); else if(!state.songs.length) renderEditorEmpty(); }
@@ -533,7 +622,16 @@ function scheduleSave(){ clearTimeout(state.saveTimeout); document.getElementByI
 function showSaveToast(){ document.getElementById('save-indicator').textContent='Saved'; document.getElementById('save-indicator').classList.add('saved'); const t=document.getElementById('save-toast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
 async function selectSong(id){ state.currentSongId=id; if(state.user&&firebaseConfigured&&db){try{const d=await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get();state.currentSong=d.exists?d.data():null;}catch(e){state.currentSong=null;}} else{const r=localStorage.getItem('openchord_songs');state.currentSong=(r?JSON.parse(r):{})[id]||null;} if(state.currentSong){state.currentSong.lines=(state.currentSong.lines||[]).map(l=>{if(!l.type)l.type='lyrics';if(l.type==='tab'&&!l.slurs)l.slurs=[];return l;});document.getElementById('song-title-input').value=state.currentSong.title||'';renderEditor();updateQuickChords();seedUndoStack();} renderSidebar(); if(window.innerWidth<=768) switchMobilePanel('editor'); }
 function createNewSong(){ const id='song_'+Date.now()+'_'+Math.random().toString(36).substr(2,6); state.currentSong={title:'Untitled Song',lines:[{type:'lyrics',lyrics:'',chords:[]}],updatedAt:Date.now()}; state.currentSongId=id; state.songs.unshift({id,title:'Untitled Song',updatedAt:Date.now(),preview:''}); document.getElementById('song-title-input').value='Untitled Song'; renderEditor();renderSidebar();saveSong();seedUndoStack(); if(window.innerWidth<=768) switchMobilePanel('editor'); setTimeout(()=>focusLine(0,0),50); }
-async function deleteSong(id){ if(!confirm('Delete this song?'))return; if(state.user&&firebaseConfigured&&db){try{await db.collection('users').doc(state.user.uid).collection('songs').doc(id).delete();}catch(e){}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};delete s[id];localStorage.setItem('openchord_songs',JSON.stringify(s));} state.songs=state.songs.filter(s=>s.id!==id); if(state.currentSongId===id){state.currentSongId=null;state.currentSong=null;if(state.songs.length)selectSong(state.songs[0].id);else renderEditorEmpty();} renderSidebar(); }
+function deleteSong(id){
+    const song = state.songs.find(s=>s.id===id);
+    showModal({
+        icon:'🗑️', title:'Delete this song?',
+        message:'<b style="color:var(--text)">'+ esc(song?song.title:'this song') +'</b> will be permanently removed. This can\'t be undone.',
+        confirmText:'Delete', confirmClass:'danger',
+        onConfirm: ()=>doDeleteSong(id)
+    });
+}
+async function doDeleteSong(id){ if(state.user&&firebaseConfigured&&db){try{await db.collection('users').doc(state.user.uid).collection('songs').doc(id).delete();}catch(e){}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};delete s[id];localStorage.setItem('openchord_songs',JSON.stringify(s));} state.songs=state.songs.filter(s=>s.id!==id); if(state.currentSongId===id){state.currentSongId=null;state.currentSong=null;if(state.songs.length)selectSong(state.songs[0].id);else renderEditorEmpty();} renderSidebar(); }
 function onTitleChange(){ if(state.currentSong){state.currentSong.title=document.getElementById('song-title-input').value;scheduleSave();} }
 
 // ═══ SIDEBAR ═══
@@ -667,7 +765,23 @@ function setupLyricEvents(ly, li) {
 function makeEmptyTabData(){ return TAB_STRINGS.map(()=>new Array(TAB_COLS).fill('')); }
 
 function insertTabBlock(){ if(!state.currentSong)return; pushUndoSnapshot(); let at=state.currentSong.lines.length; if(state.lastFocusedLineIdx!==null&&state.lastFocusedLineIdx<state.currentSong.lines.length) at=state.lastFocusedLineIdx+1; state.currentSong.lines.splice(at,0,{type:'tab',tuning:[...TAB_STRINGS],data:makeEmptyTabData(),slurs:[]}); renderEditor();scheduleSave(); const els=document.querySelectorAll('#editor-content > *'); if(els[at]) els[at].scrollIntoView({behavior:'smooth',block:'center'}); }
-function insertSection(){ if(!state.currentSong)return; const label=prompt('Section name:','Chorus'); if(!label)return; pushUndoSnapshot(); let at=state.currentSong.lines.length; if(state.lastFocusedLineIdx!==null&&state.lastFocusedLineIdx<state.currentSong.lines.length) at=state.lastFocusedLineIdx+1; state.currentSong.lines.splice(at,0,{type:'lyrics',lyrics:'['+label+']',chords:[]}); renderEditor();scheduleSave(); }
+function insertSection(){
+    if(!state.currentSong) return;
+    showModal({
+        icon:'📑', title:'Add Section',
+        message:'Name this section (e.g. Chorus, Verse 2, Bridge)',
+        inputVal:'Chorus', placeholder:'Section name',
+        confirmText:'Add', confirmClass:'primary',
+        onConfirm: (label) => {
+            if(!label||!label.trim()) return;
+            pushUndoSnapshot();
+            let at=state.currentSong.lines.length;
+            if(state.lastFocusedLineIdx!==null&&state.lastFocusedLineIdx<state.currentSong.lines.length) at=state.lastFocusedLineIdx+1;
+            state.currentSong.lines.splice(at,0,{type:'lyrics',lyrics:'['+label.trim()+']',chords:[]});
+            renderEditor(); scheduleSave();
+        }
+    });
+}
 
 function buildTabBlock(line, index) {
     const block=document.createElement('div'); block.className='tab-block'; block.dataset.index=index;
