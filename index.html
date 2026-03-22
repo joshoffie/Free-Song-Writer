@@ -147,7 +147,7 @@
         .tab-sym-btn .sym-hint { display:none; font-size:9px; color:var(--text-dim); margin-left:4px; }
         .tab-sym-btn:hover .sym-hint { display:inline; }
         /* Slur arcs */
-        .tab-slurs-svg { position:absolute; top:0; left:26px; pointer-events:none; overflow:visible; }
+        .tab-slurs-svg { position:absolute; top:0; left:26px; pointer-events:none; overflow:visible; z-index:3; }
         .tab-slurs-svg path { fill:none; stroke:var(--tab-active); stroke-width:1.5; }
         .tab-slurs-svg path.slur-preview { stroke-dasharray:4 3; opacity:0.6; }
         /* Drop indicator */
@@ -195,7 +195,7 @@
 </div>
 <div id="main-app">
     <div id="navbar">
-        <div class="nav-logo">free<span>tabs</span>forever</div><div class="nav-divider"></div>
+        <div class="nav-logo">free<span>tabs</span><em style="font-style:italic;color:var(--tab-active)">forever</em></div><div class="nav-divider"></div>
         <input type="text" id="song-title-input" placeholder="Untitled Song" spellcheck="false">
         <div class="nav-spacer"></div>
         <span class="nav-save-indicator" id="save-indicator"></span>
