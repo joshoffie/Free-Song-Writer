@@ -255,8 +255,17 @@ function init() {
     document.getElementById('insert-section-btn').addEventListener('click',insertSection);
     document.addEventListener('keydown', globalKeydown);
     document.addEventListener('mouseup', ()=>{ state._mouseSelecting=false; });
-    // Tab block drag: editor-content level handlers
+    // Fallback mouse-move selection on editor container (catches drags across contenteditable boundaries)
     const ec = document.getElementById('editor-content');
+    ec.addEventListener('mousemove', e=>{
+        if(!state._mouseSelecting || e.buttons!==1 || state.selAnchor===null) return;
+        const children = Array.from(ec.children);
+        for(let i=children.length-1; i>=0; i--){
+            const rect = children[i].getBoundingClientRect();
+            if(e.clientY >= rect.top){ if(i!==state.selAnchor){ state.selFocus=i; updateSelectionHL(); } break; }
+        }
+    });
+    // Tab block drag: editor-content level handlers
     ec.addEventListener('dragover', onEditorDragOver);
     ec.addEventListener('drop', onEditorDrop);
     ec.addEventListener('dragleave', ()=>removeDropIndicator());
@@ -264,6 +273,13 @@ function init() {
 
 function globalKeydown(e) {
     if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveSong(); }
+    // Multi-line selection: Delete / Backspace / Escape (global so it works regardless of focus)
+    if (hasMultiSel()) {
+        if (e.key==='Delete' || e.key==='Backspace') { e.preventDefault(); e.stopPropagation(); batchDeleteSelection(); return; }
+        if (e.key==='Escape') { e.preventDefault(); clearSelection(); return; }
+        // Typing replaces selection
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey && e.key.length===1) { e.preventDefault(); e.stopPropagation(); batchDeleteSelection(); return; }
+    }
     // Ctrl+A: select all lines if focus is in editor
     if ((e.ctrlKey||e.metaKey) && e.key==='a' && state.currentSong) {
         const ae = document.activeElement;
