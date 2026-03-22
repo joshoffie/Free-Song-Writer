@@ -397,6 +397,7 @@
     let state = {
         user: null, songs: [], currentSongId: null, currentSong: null,
         charWidth: 9, saveTimeout: null, usedChords: [],
+        lastFocusedLineIdx: null, // tracks which lyric line was last focused
     };
 
     // Key detection data: key → diatonic chords
@@ -724,6 +725,7 @@
 
     // ─── Lyric events ───
     function setupLyricEvents(ly, li) {
+        ly.addEventListener('focus', () => { state.lastFocusedLineIdx = li; });
         ly.addEventListener('input', () => {
             const t = ly.textContent; state.currentSong.lines[li].lyrics = t;
             if (/^\[.+\]$/.test(t.trim())) ly.classList.add('section-label'); else ly.classList.remove('section-label');
@@ -780,12 +782,10 @@
 
     function insertTabBlock() {
         if (!state.currentSong) return;
-        // Find insertion point: after the last focused lyric line, or at end
-        const focused = document.activeElement;
+        // Insert after the last lyric line the user was working in, or at end
         let insertAt = state.currentSong.lines.length;
-        if (focused && focused.classList && focused.classList.contains('lyric-line')) {
-            const pair = focused.closest('.line-pair');
-            if (pair) insertAt = parseInt(pair.dataset.index) + 1;
+        if (state.lastFocusedLineIdx !== null && state.lastFocusedLineIdx < state.currentSong.lines.length) {
+            insertAt = state.lastFocusedLineIdx + 1;
         }
         const tabLine = { type: 'tab', tuning: [...TAB_STRINGS], data: makeEmptyTabData() };
         state.currentSong.lines.splice(insertAt, 0, tabLine);
@@ -799,11 +799,9 @@
         if (!state.currentSong) return;
         const label = prompt('Section name:', 'Chorus');
         if (!label) return;
-        const focused = document.activeElement;
         let insertAt = state.currentSong.lines.length;
-        if (focused && focused.classList && focused.classList.contains('lyric-line')) {
-            const pair = focused.closest('.line-pair');
-            if (pair) insertAt = parseInt(pair.dataset.index) + 1;
+        if (state.lastFocusedLineIdx !== null && state.lastFocusedLineIdx < state.currentSong.lines.length) {
+            insertAt = state.lastFocusedLineIdx + 1;
         }
         state.currentSong.lines.splice(insertAt, 0, { type:'lyrics', lyrics: '['+label+']', chords:[] });
         renderEditor(); scheduleSave();
