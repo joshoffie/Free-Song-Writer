@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         :root {
@@ -85,6 +86,9 @@
         .toolbar-btn svg { width:14px; height:14px; }
         .toolbar-btn[disabled] { opacity:0.3; cursor:default; pointer-events:none; }
         .toolbar-btn.undo-redo-btn { font-size:11px; padding:4px 10px; gap:4px; }
+        .toolbar-btn.pdf-btn { background:rgba(248,81,73,0.1); border-color:rgba(248,81,73,0.3); color:#f85149; font-size:13px; font-weight:700; letter-spacing:0.5px; }
+        .toolbar-btn.pdf-btn:hover { background:rgba(248,81,73,0.2); border-color:#f85149; color:#fff; }
+        .toolbar-btn.pdf-btn b { font-size:14px; }
         .toolbar-sep { width:1px; height:20px; background:var(--border); }
         #editor-scroll { flex:1; overflow:auto; padding:24px 32px 120px 32px; }
         #editor-content { width:max-content; min-width:100%; min-height:100%; }
@@ -134,7 +138,9 @@
         .tab-row { display:flex; align-items:center; height:20px; position:relative; }
         .tab-row::after { content:''; position:absolute; left:26px; right:0; top:50%; height:1px; background:var(--tab-line); z-index:0; pointer-events:none; }
         .tab-cells-row { display:flex; position:relative; z-index:1; }
-        .tab-string-label { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--text-muted); width:20px; text-align:right; padding-right:6px; flex-shrink:0; }
+        .tab-string-label { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--text-muted); width:20px; text-align:right; padding-right:6px; flex-shrink:0; cursor:pointer; }
+        .tab-string-label:hover { color:var(--tab-active); }
+        .tab-tuning-input { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--tab-active); width:24px; text-align:center; padding:0; flex-shrink:0; background:var(--surface-active); border:1px solid var(--tab-active); border-radius:3px; outline:none; height:18px; }
         .tab-cell { cursor:pointer; text-align:center; font-family:var(--font-mono); font-size:13px; line-height:20px; outline:none; color:var(--text-muted); width:24px; height:20px; display:flex; align-items:center; justify-content:center; background:var(--surface); }
         .tab-cell:hover { background:rgba(240,136,62,0.1); border-radius:3px; }
         .tab-cell:focus { background:rgba(240,136,62,0.18); border-radius:3px; color:var(--tab-active); outline:1px solid var(--tab-active); }
@@ -340,6 +346,8 @@
                 <div style="flex:1"></div>
                 <button class="toolbar-btn undo-redo-btn" id="global-undo-btn" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h9a3 3 0 0 1 0 6H9"/><polyline points="6 5 3 8 6 11"/></svg>Undo</button>
                 <button class="toolbar-btn undo-redo-btn" id="global-redo-btn" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 8H4a3 3 0 0 0 0 6h3"/><polyline points="10 5 13 8 10 11"/></svg>Redo</button>
+                <div class="toolbar-sep"></div>
+                <button class="toolbar-btn pdf-btn" id="export-pdf-btn" title="Export as PDF"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h6l4 4v10H2V1z"/><polyline points="10 1 10 5 14 5"/></svg><b>PDF</b></button>
             </div>
             <div id="editor-scroll"><div id="editor-content"></div></div>
         </div>
@@ -538,6 +546,153 @@ function switchMobilePanel(panel) {
     document.querySelectorAll('.mob-tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
 }
 
+// ═══ PDF EXPORT ═══
+function exportPDF() {
+    if (!state.currentSong) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit:'pt', format:'letter' });
+    const W = doc.internal.pageSize.getWidth();
+    const H = doc.internal.pageSize.getHeight();
+    const margin = 50;
+    const maxX = W - margin;
+    let y = margin;
+    const lineH = 14; // line height for lyrics/chords
+    const tabCellW = 14; // width per tab cell
+    const tabRowH = 12; // height per tab string row
+
+    function checkPage(need) { if (y + need > H - margin) { doc.addPage(); y = margin; } }
+
+    // Title
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(22);
+    doc.text(state.currentSong.title || 'Untitled', margin, y);
+    y += 32;
+
+    // Detected key
+    const used = collectUsedChords();
+    const key = detectKey(used);
+    if (key) {
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(10);
+        doc.setTextColor(150);
+        doc.text('Key: ' + key, margin, y);
+        y += 16;
+    }
+    doc.setTextColor(0);
+
+    state.currentSong.lines.forEach(line => {
+        if (line.type === 'lyrics') {
+            const txt = line.lyrics || '';
+            const chords = line.chords || [];
+            const isSection = /^\[.+\]$/.test(txt.trim());
+            const hasChords = chords.length > 0;
+
+            // Space needed: chord line + lyric line
+            checkPage((hasChords ? lineH : 0) + lineH + 4);
+
+            // Draw chords above lyrics
+            if (hasChords) {
+                doc.setFont('courier','bold');
+                doc.setFontSize(11);
+                doc.setTextColor(30, 100, 200);
+                chords.forEach(c => {
+                    const cx = margin + c.pos * 7.2; // monospace char width approx
+                    if (cx < maxX) doc.text(c.name, cx, y);
+                });
+                y += lineH;
+            }
+
+            // Draw lyrics
+            if (isSection) {
+                doc.setFont('helvetica','bold');
+                doc.setFontSize(12);
+                doc.setTextColor(120, 80, 200);
+            } else {
+                doc.setFont('courier','normal');
+                doc.setFontSize(11);
+                doc.setTextColor(0);
+            }
+            if (txt.trim()) doc.text(txt, margin, y);
+            y += lineH + 2;
+
+            doc.setTextColor(0);
+        } else if (line.type === 'tab') {
+            const data = line.data || [];
+            const tuning = line.tuning || ['e','B','G','D','A','E'];
+            const numCols = data[0] ? data[0].length : 0;
+            const blockH = tuning.length * tabRowH + 16;
+
+            checkPage(blockH + 12);
+            y += 6;
+
+            const labelW = 16;
+            const gridW = Math.min(numCols * tabCellW, maxX - margin - labelW);
+
+            tuning.forEach((str, row) => {
+                const rowY = y + row * tabRowH;
+
+                // String label
+                doc.setFont('courier','bold');
+                doc.setFontSize(9);
+                doc.setTextColor(100);
+                doc.text(str, margin, rowY + tabRowH * 0.7);
+
+                // Horizontal string line
+                doc.setDrawColor(180);
+                doc.setLineWidth(0.5);
+                doc.line(margin + labelW, rowY + tabRowH * 0.5, margin + labelW + gridW, rowY + tabRowH * 0.5);
+
+                // Cell values
+                doc.setFont('courier','bold');
+                doc.setFontSize(9);
+                doc.setTextColor(0);
+                for (let col = 0; col < numCols; col++) {
+                    const val = data[row] && data[row][col] ? data[row][col] : '';
+                    if (val) {
+                        const cx = margin + labelW + col * tabCellW;
+                        if (cx < maxX) {
+                            // White background behind number to "cut" the line
+                            const tw = doc.getTextWidth(val);
+                            doc.setFillColor(255);
+                            doc.rect(cx - 1, rowY + 1, tw + 2, tabRowH - 2, 'F');
+                            doc.text(val, cx, rowY + tabRowH * 0.7);
+                        }
+                    }
+                }
+            });
+
+            // Draw slur arcs as simple curved lines
+            doc.setDrawColor(200, 100, 30);
+            doc.setLineWidth(1);
+            (line.slurs || []).forEach(sl => {
+                const x1 = margin + labelW + sl.startCol * tabCellW + tabCellW/2;
+                const x2 = margin + labelW + sl.endCol * tabCellW + tabCellW/2;
+                const slY = y + sl.row * tabRowH + 2;
+                const midX = (x1 + x2) / 2;
+                const cpY = slY - 8;
+                // Draw arc as series of short line segments
+                const segs = 16;
+                for (let s = 0; s < segs; s++) {
+                    const t0 = s / segs, t1 = (s + 1) / segs;
+                    const ax = (1-t0)*(1-t0)*x1 + 2*(1-t0)*t0*midX + t0*t0*x2;
+                    const ay = (1-t0)*(1-t0)*slY + 2*(1-t0)*t0*cpY + t0*t0*slY;
+                    const bx = (1-t1)*(1-t1)*x1 + 2*(1-t1)*t1*midX + t1*t1*x2;
+                    const by = (1-t1)*(1-t1)*slY + 2*(1-t1)*t1*cpY + t1*t1*slY;
+                    doc.line(ax, ay, bx, by);
+                }
+            });
+
+            y += tuning.length * tabRowH + 10;
+            doc.setDrawColor(0);
+            doc.setTextColor(0);
+        }
+    });
+
+    // Download
+    const filename = (state.currentSong.title || 'song').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'song';
+    doc.save(filename + '.pdf');
+}
+
 function init() {
     if (firebaseConfigured) { firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
     else { document.getElementById('config-banner').style.display='flex'; enterApp(null); }
@@ -550,6 +705,7 @@ function init() {
     document.getElementById('user-avatar').addEventListener('click',toggleUserMenu);
     document.getElementById('insert-tab-btn').addEventListener('click',insertTabBlock);
     document.getElementById('insert-section-btn').addEventListener('click',insertSection);
+    document.getElementById('export-pdf-btn').addEventListener('click',exportPDF);
     document.getElementById('global-undo-btn').addEventListener('click', globalUndo);
     document.getElementById('global-redo-btn').addEventListener('click', globalRedo);
     initMobileNav();
@@ -874,1065 +1030,15 @@ function buildTabBlock(line, index) {
 
     line.tuning.forEach((str,row)=>{
         const rowEl=document.createElement('div'); rowEl.className='tab-row';
-        const label=document.createElement('span'); label.className='tab-string-label'; label.textContent=str; rowEl.appendChild(label);
-        const cellsRow=document.createElement('div'); cellsRow.className='tab-cells-row';
-        for(let col=0;col<numCols;col++){
-            const cell=document.createElement('div'); cell.className='tab-cell'; cell.tabIndex=-1;
-            cell.dataset.row=row; cell.dataset.col=col; cell.dataset.lineIdx=index;
-            const val=line.data[row][col]||''; cell.textContent=val||'-'; if(val) cell.classList.add('has-note');
-            setupTabCellEvents(cell,line,row,col);
-            cellsRow.appendChild(cell);
-        }
-        rowEl.appendChild(cellsRow); grid.appendChild(rowEl);
-    });
-
-    // Slur arcs SVG
-    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('class','tab-slurs-svg');
-    svg.setAttribute('width', numCols*24); svg.setAttribute('height', line.tuning.length*20);
-    (line.slurs||[]).forEach(sl=>{ renderSlurArc(svg, sl); });
-    grid.appendChild(svg);
-
-    body.appendChild(grid); block.appendChild(body); return block;
-}
-
-function renderSlurArc(svg, sl) {
-    const x1=sl.startCol*24+12, x2=sl.endCol*24+12, y=sl.row*20+4;
-    const mid=(x1+x2)/2, cp=y-14;
-    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
-    path.setAttribute('d','M '+x1+','+y+' Q '+mid+','+cp+' '+x2+','+y);
-    svg.appendChild(path);
-}
-
-function applySymbolToCell(line, row, col, key) {
-    const val=line.data[row][col]||'';
-    pushTabState(line);
-    switch(key){
-        case 'b': line.data[row][col]=val?val.replace(/b$/,'')+'b':'b'; break;
-        case '~': line.data[row][col]=val?val.replace(/~$/,'')+'~':'~'; break;
-        case 'x': line.data[row][col]='x'; break;
-        case 't': line.data[row][col]=val?'t'+val.replace(/^t/,''):'t'; break;
-        case 'r': line.data[row][col]=val?val.replace(/r$/,'')+'r':'r'; break;
-        case 'PM': line.data[row][col]='PM'; break;
-        case 'harm': line.data[row][col]=val?'<'+val.replace(/[<>]/g,'')+'>':'<>'; break;
-        case 'ghost': line.data[row][col]=val?'('+val.replace(/[()]/g,'')+')':'()'; break;
-        default: line.data[row][col]=val+key;
-    }
-    scheduleSave();
-}
-
-function handleTabSymbol(key, line, lineIdx, btn, block) {
-    if(key==='undo'){ if(tabUndo(line)){renderEditor();scheduleSave();} return; }
-    if(key==='redo'){ if(tabRedo(line)){renderEditor();scheduleSave();} return; }
-    if(key==='slur'){
-        // Toggle slur drag mode
-        if(state.slurMode && state.slurMode.lineIdx===lineIdx){
-            exitSlurMode(block); return;
-        }
-        exitSlurMode(); // clear any other block's slur mode
-        state.slurMode={lineIdx, startRow:null, startCol:null};
-        btn.classList.add('active');
-        block.classList.add('slur-active');
-        return;
-    }
-    // Per-cell symbols: apply to focused cell (click fallback)
-    const focused=block.querySelector('.tab-cell:focus');
-    if(!focused){ showTabToast(block,'Select a cell first, or drag the symbol onto a cell'); return; }
-    const row=+focused.dataset.row, col=+focused.dataset.col;
-    applySymbolToCell(line, row, col, key);
-    focused.textContent=line.data[row][col]; focused.classList.add('has-note');
-    flashCell(focused);
-}
-
-function exitSlurMode(block) {
-    state.slurMode=null;
-    document.querySelectorAll('.tab-block.slur-active').forEach(b=>b.classList.remove('slur-active'));
-    document.querySelectorAll('.tab-sym-btn.active').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.tab-cell.slur-start').forEach(c=>c.classList.remove('slur-start'));
-    document.querySelectorAll('.slur-preview').forEach(p=>p.remove());
-}
-
-function flashCell(cell) {
-    cell.style.transition='background 0.15s';
-    cell.style.background='rgba(240,136,62,0.4)';
-    setTimeout(()=>{ cell.style.background=''; cell.style.transition=''; },300);
-}
-
-function showTabToast(block, msg) {
-    const existing=block.querySelector('.tab-toast'); if(existing) existing.remove();
-    const t=document.createElement('div');
-    t.className='tab-toast';
-    t.style.cssText='position:absolute;top:8px;right:12px;padding:6px 12px;background:var(--surface-hover);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text-muted);z-index:20;pointer-events:none;opacity:1;transition:opacity 0.3s';
-    t.textContent=msg;
-    block.style.position='relative'; block.appendChild(t);
-    setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.remove(),300); },1800);
-}
-
-function setupTabCellEvents(cell, line, row, col) {
-    cell.addEventListener('focus',()=>{ cell.textContent=line.data[row][col]||''; });
-    cell.addEventListener('blur',()=>{ const v=line.data[row][col]||''; cell.textContent=v||'-'; if(v) cell.classList.add('has-note'); else cell.classList.remove('has-note'); });
-
-    // ── Symbol drag-and-drop target ──
-    cell.addEventListener('dragover',e=>{
-        if(e.dataTransfer.types.includes('application/x-tab-sym')){
-            e.preventDefault(); e.dataTransfer.dropEffect='copy';
-            cell.classList.add('sym-drop-hover');
-        }
-    });
-    cell.addEventListener('dragleave',()=>{ cell.classList.remove('sym-drop-hover'); });
-    cell.addEventListener('drop',e=>{
-        cell.classList.remove('sym-drop-hover');
-        const symKey=e.dataTransfer.getData('application/x-tab-sym');
-        if(!symKey) return;
-        e.preventDefault(); e.stopPropagation();
-        applySymbolToCell(line, row, col, symKey);
-        const v=line.data[row][col]||'';
-        cell.textContent=v||'-';
-        if(v) cell.classList.add('has-note'); else cell.classList.remove('has-note');
-        flashCell(cell);
-    });
-
-    // ── Slur drag mode: mousedown to start, mouseup to finish ──
-    cell.addEventListener('mousedown',e=>{
-        if(!state.slurMode || state.slurMode.lineIdx!==parseInt(cell.dataset.lineIdx)) return;
-        e.preventDefault();
-        const sm=state.slurMode;
-        sm.startRow=row; sm.startCol=col;
-        cell.classList.add('slur-start');
-        // Track mouse for preview arc
-        const block=cell.closest('.tab-block');
-        const svg=block?block.querySelector('.tab-slurs-svg'):null;
-        function onMove(ev){
-            if(!svg) return;
-            // Remove old preview
-            const old=svg.querySelector('.slur-preview'); if(old) old.remove();
-            // Find which cell the mouse is over
-            const target=document.elementFromPoint(ev.clientX, ev.clientY);
-            if(!target||!target.classList||!target.classList.contains('tab-cell')) return;
-            const tr=+target.dataset.row, tc=+target.dataset.col;
-            if(tr!==sm.startRow) return; // slurs stay on same string
-            const x1=Math.min(sm.startCol,tc)*24+12, x2=Math.max(sm.startCol,tc)*24+12, y=sm.startRow*20+4;
-            const mid=(x1+x2)/2, cp=y-14;
-            const path=document.createElementNS('http://www.w3.org/2000/svg','path');
-            path.setAttribute('class','slur-preview');
-            path.setAttribute('d','M '+x1+','+y+' Q '+mid+','+cp+' '+x2+','+y);
-            svg.appendChild(path);
-        }
-        function onUp(ev){
-            document.removeEventListener('mousemove',onMove);
-            document.removeEventListener('mouseup',onUp);
-            cell.classList.remove('slur-start');
-            const target=document.elementFromPoint(ev.clientX, ev.clientY);
-            if(target&&target.classList&&target.classList.contains('tab-cell')){
-                const tr=+target.dataset.row, tc=+target.dataset.col;
-                if(tr===sm.startRow && tc!==sm.startCol){
-                    if(!line.slurs) line.slurs=[];
-                    line.slurs.push({row:sm.startRow, startCol:Math.min(sm.startCol,tc), endCol:Math.max(sm.startCol,tc)});
-                }
-            }
-            exitSlurMode(block);
-            renderEditor(); scheduleSave();
-        }
-        document.addEventListener('mousemove',onMove);
-        document.addEventListener('mouseup',onUp);
-    });
-
-    cell.addEventListener('keydown',e=>{
-        const nc=line.data[0].length, nr=line.tuning.length;
-        if(e.key==='ArrowRight'){e.preventDefault();focusTabCell(cell,row,col+1,nc,nr);}
-        else if(e.key==='ArrowLeft'){e.preventDefault();focusTabCell(cell,row,col-1,nc,nr);}
-        else if(e.key==='ArrowDown'){e.preventDefault();focusTabCell(cell,row+1,col,nc,nr);}
-        else if(e.key==='ArrowUp'){e.preventDefault();focusTabCell(cell,row-1,col,nc,nr);}
-        else if(e.key==='Backspace'||e.key==='Delete'){ e.preventDefault(); pushTabState(line); line.data[row][col]=''; cell.textContent=''; cell.classList.remove('has-note'); scheduleSave(); }
-        else if(e.key==='Tab'){e.preventDefault();focusTabCell(cell,row,e.shiftKey?col-1:col+1,nc,nr);}
-        else if(/^[0-9hpbxrt~\/\\|]$/.test(e.key)){
-            e.preventDefault(); pushTabState(line);
-            const cur=line.data[row][col]||'';
-            if(/^\d$/.test(e.key)&&/^\d$/.test(cur)&&parseInt(cur+e.key)<=24){ line.data[row][col]=cur+e.key; }
-            else { line.data[row][col]=e.key; }
-            cell.textContent=line.data[row][col]; cell.classList.add('has-note'); scheduleSave();
-            if(!/^\d$/.test(e.key)||line.data[row][col].length>=2) focusTabCell(cell,row,col+1,nc,nr);
-        }
-    });
-}
-function focusTabCell(from,r,c,nc,nr){ if(r<0||r>=nr||c<0||c>=nc)return; const bl=from.closest('.tab-block'); if(!bl)return; const t=bl.querySelector('.tab-cell[data-row="'+r+'"][data-col="'+c+'"]'); if(t) t.focus(); }
-
-// ─── Tab block drag & drop (reorder in editor) ───
-function onEditorDragOver(e){
-    if(state.dragTabIdx===null) return;
-    e.preventDefault(); e.dataTransfer.dropEffect='move';
-    const ec=document.getElementById('editor-content');
-    const children=[...ec.children].filter(c=>!c.classList.contains('drop-indicator'));
-    removeDropIndicator();
-    let target=null;
-    for(const ch of children){ const r=ch.getBoundingClientRect(); if(e.clientY<r.top+r.height/2){target=ch;break;} }
-    const ind=document.createElement('div'); ind.className='drop-indicator'; ind.id='drop-ind';
-    if(target) ec.insertBefore(ind,target); else ec.appendChild(ind);
-}
-function onEditorDrop(e){
-    if(state.dragTabIdx===null) return;
-    e.preventDefault(); removeDropIndicator();
-    const ec=document.getElementById('editor-content');
-    const children=[...ec.children].filter(c=>c.id!=='drop-ind');
-    let dropIdx=children.length;
-    for(let i=0;i<children.length;i++){const r=children[i].getBoundingClientRect();if(e.clientY<r.top+r.height/2){dropIdx=i;break;}}
-    const src=state.dragTabIdx;
-    const [removed]=state.currentSong.lines.splice(src,1);
-    const adj=dropIdx>src?dropIdx-1:dropIdx;
-    state.currentSong.lines.splice(adj,0,removed);
-    state.dragTabIdx=null; renderEditor(); scheduleSave();
-}
-function removeDropIndicator(){ const d=document.getElementById('drop-ind'); if(d) d.remove(); }
-
-// ═══ CHORD SHEET PARSER ═══
-function parseChordSheet(lines){ const r=[];let i=0; while(i<lines.length){const tr=lines[i].trim();if(isChordLine(tr)&&i+1<lines.length&&!isChordLine(lines[i+1].trim())){r.push({type:'lyrics',lyrics:lines[i+1],chords:parseChordsFromText(lines[i])});i+=2;}else{r.push({type:'lyrics',lyrics:lines[i],chords:[]});i++;}} return r; }
-function isChordLine(t){ if(!t)return false; return t.trim().split(/\s+/).every(x=>CHORD_RE.test(x)); }
-function parseChordsFromText(t){ const r=[],re=/[A-G][#b]?(?:m|maj|min|dim|aug|sus|add|M)?\d{0,2}(?:\/[A-G][#b]?)?/g; let m; while((m=re.exec(t))!==null) r.push({name:m[0],pos:m.index}); return r; }
-
-// ═══ CURSOR HELPERS ═══
-function getCaretOffset(el){ const s=window.getSelection();if(!s.rangeCount)return 0; const r=s.getRangeAt(0).cloneRange();r.selectNodeContents(el);r.setEnd(s.getRangeAt(0).startContainer,s.getRangeAt(0).startOffset);return r.toString().length; }
-function focusLine(li,cp){ const els=document.querySelectorAll('#editor-content > *'); if(li<0||li>=els.length)return; const el=els[li]; if(!el||!el.classList.contains('line-pair'))return; const ly=el.querySelector('.lyric-line'); if(!ly)return; ly.focus(); let tn=null; for(let i=0;i<ly.childNodes.length;i++){if(ly.childNodes[i].nodeType===Node.TEXT_NODE){tn=ly.childNodes[i];break;}} if(!tn&&(cp||0)>0){tn=document.createTextNode(ly.textContent||'');ly.innerHTML='';ly.appendChild(tn);} if(tn){try{const s=window.getSelection(),r=document.createRange();r.setStart(tn,Math.min(cp||0,tn.length));r.collapse(true);s.removeAllRanges();s.addRange(r);}catch(e){}} }
-function focusLyricNear(from,dir,cp){ let t=from+dir; while(t>=0&&t<state.currentSong.lines.length){if(state.currentSong.lines[t].type!=='tab'){focusLine(t,cp);return;}t+=dir;} }
-
-// ═══ KEY DETECTION & QUICK CHORDS ═══
-function collectUsedChords(){ if(!state.currentSong)return[]; const s=new Set(); state.currentSong.lines.forEach(l=>{if(l.type==='tab')return;(l.chords||[]).forEach(c=>s.add(c.name));}); return[...s]; }
-function normalizeChord(c){ const m=c.match(/^([A-G][#b]?)(m|min)?/); return m?m[1]+(m[2]?'m':''):c; }
-function detectKey(used){ if(!used.length)return null; const norm=used.map(normalizeChord); let bk=null,bs=-1; for(const[k,d]of Object.entries(KEY_CHORDS)){let sc=0;const simple=d.map(c=>c.replace('dim',''));norm.forEach(c=>{if(d.includes(c)||simple.includes(c))sc++;});if(norm.includes(k))sc+=0.5;if(sc>bs){bs=sc;bk=k;}} return bs>0?bk:null; }
-function getSuggested(key,used){ if(!key||!KEY_CHORDS[key])return[]; return KEY_CHORDS[key].filter(c=>!used.includes(c)&&!used.includes(c.replace('dim',''))); }
-function updateQuickChords(){ const used=collectUsedChords(); state.usedChords=used; renderQuickChords(used); }
-function renderQuickChords(used){ const c=document.getElementById('quick-chords'); if(!c)return; if(!used||!used.length){c.innerHTML='<div style="font-size:12px;color:var(--text-dim);padding:4px">Place some chords to see suggestions here.</div>';return;} const key=detectKey(used);const suggested=key?getSuggested(key,used):[]; let h=''; if(key) h+='<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Detected Key</span><span class="detected-key">'+esc(key)+' Major</span></div></div>'; h+='<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Your Chords</span></div><div class="quick-chips">'; used.forEach(c=>{h+='<div class="quick-chip used" draggable="true" data-chord="'+esc(c)+'">'+esc(c)+'</div>';}); h+='</div></div>'; if(suggested.length){h+='<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Try Next</span></div><div class="quick-chips">';suggested.forEach(c=>{h+='<div class="quick-chip suggested" draggable="true" data-chord="'+esc(c)+'">'+esc(c)+'</div>';});h+='</div></div>';} c.innerHTML=h; c.querySelectorAll('[draggable]').forEach(chip=>{chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',chip.dataset.chord);e.dataTransfer.effectAllowed='copy';document.body.classList.add('dragging-chord');});chip.addEventListener('dragend',()=>{document.body.classList.remove('dragging-chord');document.querySelectorAll('.chord-area.drag-over').forEach(el=>el.classList.remove('drag-over'));});}); }
-
-// ═══ CHORD PALETTE ═══
-function renderChordPalette(){ const c=document.getElementById('chord-palette-content'); const roots=['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']; const groups=[{l:'Major',s:''},{l:'Minor',s:'m'},{l:'7th',s:'7'},{l:'Maj7',s:'maj7'},{l:'Min7',s:'m7'},{l:'Sus2',s:'sus2'},{l:'Sus4',s:'sus4'},{l:'Dim',s:'dim'},{l:'Aug',s:'aug'}]; let h='<div id="quick-chords" class="quick-chords"></div><div class="quick-divider"></div>'; h+='<div class="palette-tip"><strong>Tip:</strong> Drag chords onto lyrics, or click above a lyric line to type. Single-click a chord to edit, double-click to delete. Backspace to empty removes it.</div>'; groups.forEach(g=>{h+='<div class="chord-group"><div class="chord-group-label">'+g.l+'</div><div class="chord-group-items">';roots.forEach(r=>{const n=r+g.s;h+='<div class="chord-chip" draggable="true" data-chord="'+n+'">'+n+'</div>';});h+='</div></div>';}); c.innerHTML=h; c.querySelectorAll('.chord-chip').forEach(chip=>{chip.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',chip.dataset.chord);e.dataTransfer.effectAllowed='copy';document.body.classList.add('dragging-chord');});chip.addEventListener('dragend',()=>{document.body.classList.remove('dragging-chord');document.querySelectorAll('.chord-area.drag-over').forEach(el=>el.classList.remove('drag-over'));});}); updateQuickChords(); }
-
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
-document.addEventListener('DOMContentLoaded',init);
-})();
-</script>
-</body>
-</html>
-        .auth-btn:hover { background:var(--surface-hover); border-color:var(--text-muted); }
-        .auth-btn svg { width:20px; height:20px; }
-        .auth-skip { color:var(--text-muted); font-size:14px; cursor:pointer; text-decoration:underline; }
-        .auth-skip:hover { color:var(--text); }
-
-        /* NAVBAR */
-        #navbar { height:var(--navbar-h); background:var(--surface); border-bottom:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:16px; }
-        .nav-logo { font-size:20px; font-weight:700; letter-spacing:-1px; white-space:nowrap; }
-        .nav-logo span { color:var(--chord-color); }
-        .nav-divider { width:1px; height:28px; background:var(--border); }
-        #song-title-input { background:transparent; border:1px solid transparent; color:var(--text); font-size:16px; font-family:var(--font-ui); font-weight:500; padding:6px 10px; border-radius:6px; outline:none; flex:1; min-width:150px; max-width:400px; }
-        #song-title-input:hover { border-color:var(--border); }
-        #song-title-input:focus { border-color:var(--accent-blue); background:var(--surface-hover); }
-        .nav-spacer { flex:1; }
-        .nav-save-indicator { color:var(--text-muted); font-size:13px; }
-        .nav-save-indicator.saved { color:var(--accent); }
-        .nav-btn { padding:7px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:13px; font-family:var(--font-ui); cursor:pointer; }
-        .nav-btn:hover { background:var(--surface-hover); }
-        .nav-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-        .nav-btn.primary:hover { background:var(--accent-hover); }
-        .user-avatar { width:32px; height:32px; border-radius:50%; background:var(--accent-blue); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; cursor:pointer; }
-
-        /* LAYOUT */
-        #main-app { display:none; height:100vh; flex-direction:column; }
-        #app-body { display:flex; flex:1; overflow:hidden; }
-
-        /* SIDEBAR */
-        #sidebar { width:var(--sidebar-w); min-width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; }
-        .sidebar-header { padding:16px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); }
-        .sidebar-header h3 { font-size:14px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
-        .sidebar-new-btn { width:30px; height:30px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text); font-size:20px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
-        .sidebar-new-btn:hover { background:var(--accent); border-color:var(--accent); }
-        #song-list { flex:1; overflow-y:auto; padding:8px; }
-        .song-item { padding:12px; border-radius:8px; cursor:pointer; margin-bottom:4px; position:relative; }
-        .song-item:hover { background:var(--surface-hover); }
-        .song-item.active { background:var(--surface-active); border-left:3px solid var(--accent-blue); }
-        .song-item-title { font-size:14px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .song-item-meta { font-size:12px; color:var(--text-muted); margin-top:4px; }
-        .song-item-delete { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:4px; background:transparent; border:none; color:var(--text-muted); cursor:pointer; display:none; align-items:center; justify-content:center; font-size:16px; }
-        .song-item:hover .song-item-delete { display:flex; }
-        .song-item-delete:hover { background:rgba(248,81,73,0.15); color:var(--danger); }
-        .sidebar-empty { padding:32px 16px; text-align:center; color:var(--text-muted); font-size:14px; }
-
-        /* EDITOR */
-        #editor { flex:1; display:flex; flex-direction:column; overflow:hidden; background:var(--bg); }
-        #editor-toolbar { display:none; padding:6px 32px; border-bottom:1px solid var(--border); background:var(--surface); gap:8px; align-items:center; }
-        .toolbar-btn { padding:5px 12px; border-radius:5px; border:1px solid var(--border); background:transparent; color:var(--text-muted); font-size:12px; font-family:var(--font-ui); cursor:pointer; display:flex; align-items:center; gap:6px; }
-        .toolbar-btn:hover { background:var(--surface-hover); color:var(--text); border-color:var(--text-muted); }
-        .toolbar-btn svg { width:14px; height:14px; }
-        .toolbar-btn[disabled] { opacity:0.3; cursor:default; pointer-events:none; }
-        .toolbar-btn.undo-redo-btn { font-size:11px; padding:4px 10px; gap:4px; }
-        .toolbar-sep { width:1px; height:20px; background:var(--border); }
-        #editor-scroll { flex:1; overflow:auto; padding:24px 32px 120px 32px; }
-        #editor-content { width:max-content; min-width:100%; min-height:100%; }
-        .editor-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; width:100%; color:var(--text-muted); gap:16px; font-size:16px; }
-        .editor-empty-btn { padding:12px 28px; border-radius:8px; border:2px dashed var(--border); background:transparent; color:var(--chord-color); font-size:15px; font-family:var(--font-ui); cursor:pointer; }
-        .editor-empty-btn:hover { border-color:var(--chord-color); background:var(--chord-bg); }
-
-        /* Line pairs */
-        .line-pair { position:relative; margin-bottom:2px; }
-        .line-pair.line-selected { background:rgba(31,111,235,0.12); border-radius:4px; }
-        .line-pair.line-selected .lyric-line { background:transparent !important; }
-        .tab-block.line-selected { outline:2px solid var(--accent-blue); outline-offset:-1px; }
-        .chord-area { height:24px; position:relative; cursor:text; min-width:100%; padding-left:var(--editor-pad); border-radius:3px 3px 0 0; }
-        .chord-area:hover { background:rgba(88,166,255,0.04); }
-        .chord-area.drag-over { background:rgba(88,166,255,0.1); outline:1px dashed var(--chord-color); outline-offset:-1px; }
-        .chord-badge { position:absolute; top:2px; color:var(--chord-color); font-family:var(--font-mono); font-size:var(--editor-font-size); font-weight:500; line-height:20px; cursor:pointer; white-space:nowrap; padding:0 2px; border-radius:3px; }
-        .chord-badge:hover { background:var(--chord-bg); }
-        .lyric-line { font-family:var(--font-mono); font-size:var(--editor-font-size); line-height:var(--editor-line-height); color:var(--text); white-space:pre; outline:none; padding:0 var(--editor-pad); min-height:var(--editor-line-height); border-radius:0 0 3px 3px; caret-color:var(--chord-color); }
-        .lyric-line:focus { background:rgba(255,255,255,0.02); }
-        .lyric-line.section-label { color:var(--section-color); font-weight:600; font-style:italic; }
-        .chord-input-popup { position:absolute; top:0; width:72px; height:22px; background:var(--surface); border:1px solid var(--chord-color); border-radius:4px; color:var(--chord-color); font-family:var(--font-mono); font-size:14px; padding:0 6px; outline:none; z-index:10; }
-
-        /* TAB BLOCKS */
-        .tab-block { margin:8px 0; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow:hidden; transition:opacity 0.2s, transform 0.2s; }
-        .tab-block.dragging-tab { opacity:0.35; transform:scale(0.98); }
-        .tab-block-header { display:flex; align-items:center; gap:8px; padding:6px 12px; border-bottom:1px solid var(--border); background:rgba(240,136,62,0.06); }
-        .tab-drag-handle { cursor:grab; padding:2px 4px; color:var(--text-dim); display:flex; flex-direction:column; gap:2px; border-radius:3px; }
-        .tab-drag-handle:hover { background:var(--surface-hover); color:var(--text-muted); }
-        .tab-drag-handle:active { cursor:grabbing; }
-        .tab-drag-handle span { display:block; width:14px; height:2px; background:currentColor; border-radius:1px; }
-        .tab-block-label { font-size:12px; font-weight:600; color:var(--tab-active); display:flex; align-items:center; gap:6px; flex:1; }
-        .tab-block-actions { display:flex; gap:6px; }
-        .tab-block-btn { padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--text-muted); font-size:11px; font-family:var(--font-ui); cursor:pointer; }
-        .tab-block-btn:hover { background:var(--surface-hover); color:var(--text); }
-        .tab-block-btn.danger:hover { background:rgba(248,81,73,0.15); color:var(--danger); border-color:var(--danger); }
-        /* Tab symbols bar */
-        .tab-symbols-bar { display:flex; gap:4px; padding:6px 12px; border-bottom:1px solid var(--border); flex-wrap:wrap; align-items:center; }
-        .tab-sym-btn { padding:3px 8px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--text-muted); font-size:11px; font-family:var(--font-mono); cursor:pointer; white-space:nowrap; }
-        .tab-sym-btn:hover { background:rgba(240,136,62,0.1); color:var(--tab-active); border-color:var(--tab-active); }
-        .tab-sym-btn.active { background:rgba(240,136,62,0.2); color:var(--tab-active); border-color:var(--tab-active); }
-        .tab-sym-btn.undo-redo { color:var(--text-dim); font-family:var(--font-ui); }
-        .tab-sym-btn.undo-redo:hover { color:var(--text); }
-        .tab-sym-sep { width:1px; height:18px; background:var(--border); margin:0 4px; flex-shrink:0; }
-        .tab-body { padding:12px 16px; overflow-x:auto; position:relative; }
-        .tab-placeholder { text-align:center; padding:8px; font-size:12px; color:var(--text-dim); font-style:italic; }
-        .tab-grid { width:fit-content; position:relative; }
-        .tab-row { display:flex; align-items:center; height:20px; position:relative; }
-        .tab-row::after { content:''; position:absolute; left:26px; right:0; top:50%; height:1px; background:var(--tab-line); z-index:0; pointer-events:none; }
-        .tab-cells-row { display:flex; position:relative; z-index:1; }
-        .tab-string-label { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--text-muted); width:20px; text-align:right; padding-right:6px; flex-shrink:0; }
-        .tab-cell { cursor:pointer; text-align:center; font-family:var(--font-mono); font-size:13px; line-height:20px; outline:none; color:var(--text-muted); width:24px; height:20px; display:flex; align-items:center; justify-content:center; background:var(--surface); }
-        .tab-cell:hover { background:rgba(240,136,62,0.1); border-radius:3px; }
-        .tab-cell:focus { background:rgba(240,136,62,0.18); border-radius:3px; color:var(--tab-active); outline:1px solid var(--tab-active); }
-        .tab-cell.has-note { color:var(--text); font-weight:600; }
-        .tab-cell.sym-drop-hover { background:rgba(240,136,62,0.25); border-radius:3px; outline:1px dashed var(--tab-active); }
-        .tab-cell.slur-start { outline:2px solid var(--tab-active); border-radius:3px; }
-        .tab-block.slur-active .tab-cell { cursor:crosshair; }
-        .tab-sym-btn[draggable=true] { cursor:grab; }
-        .tab-sym-btn[draggable=true]:active { cursor:grabbing; }
-        .tab-sym-btn .sym-hint { display:none; font-size:9px; color:var(--text-dim); margin-left:4px; }
-        .tab-sym-btn:hover .sym-hint { display:inline; }
-        /* Slur arcs */
-        .tab-slurs-svg { position:absolute; top:0; left:26px; pointer-events:none; overflow:visible; z-index:3; }
-        .tab-slurs-svg path { fill:none; stroke:var(--tab-active); stroke-width:1.5; }
-        .tab-slurs-svg path.slur-preview { stroke-dasharray:4 3; opacity:0.6; }
-        /* Drop indicator */
-        .drop-indicator { height:3px; background:var(--accent-blue); border-radius:2px; margin:2px 0; opacity:0.9; }
-
-        /* CHORD PALETTE */
-        #chord-palette { width:var(--palette-w); min-width:var(--palette-w); background:var(--surface); border-left:1px solid var(--border); display:flex; flex-direction:column; }
-        .palette-header { padding:16px; border-bottom:1px solid var(--border); font-size:14px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
-        #chord-palette-content { flex:1; overflow-y:auto; padding:12px; }
-        .quick-chords { margin-bottom:16px; }
-        .quick-chords-section { margin-bottom:12px; }
-        .quick-section-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-        .quick-section-label { font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; }
-        .detected-key { padding:2px 8px; border-radius:4px; font-size:12px; font-weight:700; background:rgba(240,136,62,0.15); color:var(--tab-active); font-family:var(--font-mono); }
-        .quick-chips { display:flex; flex-wrap:wrap; gap:5px; }
-        .quick-chip { padding:4px 10px; border-radius:6px; cursor:grab; font-family:var(--font-mono); font-size:13px; font-weight:500; user-select:none; border:1px solid transparent; }
-        .quick-chip.used { background:var(--chord-bg); color:var(--chord-color); border-color:rgba(88,166,255,0.3); }
-        .quick-chip.suggested { background:rgba(240,136,62,0.08); color:var(--tab-active); border-color:rgba(240,136,62,0.2); }
-        .quick-chip:hover { filter:brightness(1.2); }
-        .quick-divider { height:1px; background:var(--border); margin:12px 0; }
-        .chord-group { margin-bottom:16px; }
-        .chord-group-label { font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; padding-left:2px; }
-        .chord-group-items { display:flex; flex-wrap:wrap; gap:6px; }
-        .chord-chip { padding:5px 10px; border-radius:6px; background:var(--surface-hover); border:1px solid var(--border); color:var(--chord-color); font-family:var(--font-mono); font-size:13px; font-weight:500; cursor:grab; user-select:none; }
-        .chord-chip:hover { background:var(--chord-bg); border-color:var(--chord-color); }
-        body.dragging-chord .chord-area { background:rgba(88,166,255,0.04); }
-
-        .save-toast { position:fixed; bottom:20px; right:20px; padding:10px 20px; border-radius:8px; background:var(--accent); color:#fff; font-size:13px; font-weight:500; opacity:0; transition:opacity 0.3s; pointer-events:none; z-index:100; }
-        .save-toast.show { opacity:1; }
-        .config-banner { background:rgba(31,111,235,0.12); border-bottom:1px solid rgba(31,111,235,0.3); padding:8px 16px; font-size:13px; color:var(--chord-color); display:flex; align-items:center; gap:8px; }
-        .config-banner code { background:rgba(0,0,0,0.3); padding:2px 6px; border-radius:4px; font-family:var(--font-mono); font-size:12px; }
-        .palette-tip { padding:12px; margin:8px 0; border-radius:6px; background:rgba(88,166,255,0.06); border:1px solid rgba(88,166,255,0.15); font-size:12px; color:var(--text-muted); line-height:1.5; }
-        ::-webkit-scrollbar { width:8px; height:8px; }
-        ::-webkit-scrollbar-track { background:transparent; }
-        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
-        ::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
-
-        /* ═══ MOBILE ═══ */
-        #mobile-nav { display:none; }
-
-        @media (max-width: 768px) {
-            :root { --navbar-h:48px; --editor-font-size:14px; }
-
-            /* Bottom tab bar */
-            #mobile-nav {
-                display:flex; position:fixed; bottom:0; left:0; right:0; z-index:50;
-                background:var(--surface); border-top:1px solid var(--border);
-                height:56px; align-items:center; justify-content:space-around;
-                padding-bottom:env(safe-area-inset-bottom, 0px);
-            }
-            .mob-tab {
-                display:flex; flex-direction:column; align-items:center; gap:2px;
-                background:none; border:none; color:var(--text-dim); font-size:10px;
-                font-family:var(--font-ui); cursor:pointer; padding:6px 16px;
-                border-radius:8px; transition:color 0.15s;
-            }
-            .mob-tab svg { width:22px; height:22px; }
-            .mob-tab.active { color:var(--tab-active); }
-            .mob-tab:hover { color:var(--text-muted); }
-
-            /* Auth screen mobile */
-            .auth-logo { font-size:32px; }
-            .auth-subtitle { font-size:14px; padding:0 24px; text-align:center; }
-            .auth-btn { padding:12px 24px; font-size:14px; }
-
-            /* Navbar shrink */
-            #navbar { padding:0 10px; gap:8px; }
-            .nav-logo { font-size:16px; }
-            .nav-divider { display:none; }
-            #song-title-input { font-size:14px; padding:4px 8px; min-width:0; }
-            .nav-save-indicator { display:none; }
-            .nav-btn { padding:5px 10px; font-size:11px; }
-            #save-btn { display:none; }
-            .user-avatar { width:28px; height:28px; font-size:12px; }
-
-            /* 3-panel → stacked full-screen, controlled by JS class */
-            #app-body { position:relative; flex:1; overflow:hidden; padding-bottom:56px; }
-            #sidebar {
-                position:absolute; inset:0; z-index:10;
-                width:100%; min-width:100%;
-                display:none; /* hidden by default on mobile */
-            }
-            #sidebar.mob-visible { display:flex; }
-            #editor {
-                position:absolute; inset:0; z-index:10;
-                display:flex; /* visible by default */
-            }
-            #editor.mob-hidden { display:none; }
-            #chord-palette {
-                position:absolute; inset:0; z-index:10;
-                width:100%; min-width:100%;
-                display:none;
-            }
-            #chord-palette.mob-visible { display:flex; }
-
-            /* Editor toolbar: scrollable on mobile */
-            #editor-toolbar { padding:6px 10px; gap:6px; overflow-x:auto; flex-wrap:nowrap; white-space:nowrap; }
-            .toolbar-btn { flex-shrink:0; font-size:11px; padding:4px 8px; }
-            #editor-scroll { padding:12px 10px 80px 10px; }
-
-            /* Tab blocks: ensure horizontal scroll */
-            .tab-body { padding:8px 10px; }
-            .tab-block-header { padding:6px 8px; flex-wrap:wrap; gap:4px; }
-            .tab-symbols-bar { padding:4px 8px; gap:3px; overflow-x:auto; flex-wrap:nowrap; }
-            .tab-sym-btn { flex-shrink:0; padding:3px 6px; font-size:10px; }
-
-            /* Chord palette full screen on mobile */
-            #chord-palette.mob-visible { border-left:none; }
-            .palette-header { padding:12px; }
-
-            /* Song items: show delete always on mobile (no hover) */
-            .song-item-delete { display:flex; }
-
-            /* Config banner smaller */
-            .config-banner { font-size:11px; padding:6px 10px; }
-            .config-banner code { font-size:10px; }
-
-            /* Line pairs: tighter on mobile */
-            .chord-area { min-height:18px; }
-            .lyric-line { font-size:14px; }
-        }
-
-        @media (max-width: 480px) {
-            .nav-logo { font-size:14px; }
-            .auth-logo { font-size:26px; }
-            .auth-subtitle { font-size:12px; }
-            .mob-tab { padding:6px 10px; }
-        }
-
-        /* ═══ CUSTOM MODAL ═══ */
-        .modal-overlay {
-            position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,0.6);
-            display:flex; align-items:center; justify-content:center;
-            opacity:0; transition:opacity 0.15s; backdrop-filter:blur(4px);
-        }
-        .modal-overlay.visible { opacity:1; }
-        .modal-box {
-            background:var(--surface); border:1px solid var(--border); border-radius:12px;
-            padding:28px 28px 20px; min-width:320px; max-width:400px; width:90vw;
-            box-shadow:0 16px 48px rgba(0,0,0,0.4); transform:scale(0.95); transition:transform 0.15s;
-        }
-        .modal-overlay.visible .modal-box { transform:scale(1); }
-        .modal-icon { font-size:28px; margin-bottom:12px; }
-        .modal-title { font-size:17px; font-weight:600; color:var(--text); margin-bottom:6px; }
-        .modal-msg { font-size:14px; color:var(--text-muted); line-height:1.5; margin-bottom:20px; }
-        .modal-input {
-            width:100%; padding:10px 12px; border-radius:6px; border:1px solid var(--border);
-            background:var(--bg); color:var(--text); font-size:15px; font-family:var(--font-ui);
-            outline:none; margin-bottom:20px;
-        }
-        .modal-input:focus { border-color:var(--accent-blue); }
-        .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
-        .modal-btn {
-            padding:9px 20px; border-radius:6px; border:1px solid var(--border);
-            background:var(--surface-hover); color:var(--text-muted); font-size:14px;
-            font-family:var(--font-ui); cursor:pointer; font-weight:500; transition:all 0.1s;
-        }
-        .modal-btn:hover { background:var(--surface-active); color:var(--text); }
-        .modal-btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-        .modal-btn.primary:hover { background:var(--accent-hover); }
-        .modal-btn.danger { background:rgba(248,81,73,0.12); border-color:var(--danger); color:var(--danger); }
-        .modal-btn.danger:hover { background:rgba(248,81,73,0.25); }
-    </style>
-</head>
-<body>
-<div id="auth-screen">
-    <div class="auth-logo">free<span>tabs</span><em style="font-style:italic;color:var(--tab-active)">forever</em></div>
-    <div class="auth-subtitle">Free songwriting. Unlimited songs. No paywall.</div>
-    <button class="auth-btn" id="google-signin-btn"><svg viewBox="0 0 24 24"><path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34a853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fbbc05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>Sign in with Google</button>
-    <div class="auth-skip" id="skip-auth-btn">Continue without account (local storage only)</div>
-</div>
-<div id="main-app">
-    <div id="navbar">
-        <div class="nav-logo">free<span>tabs</span><em style="font-style:italic;color:var(--tab-active)">forever</em></div><div class="nav-divider"></div>
-        <input type="text" id="song-title-input" placeholder="Untitled Song" spellcheck="false">
-        <div class="nav-spacer"></div>
-        <span class="nav-save-indicator" id="save-indicator"></span>
-        <button class="nav-btn primary" id="save-btn" title="Ctrl+S">Save</button>
-        <div class="nav-divider"></div>
-        <div class="user-avatar" id="user-avatar" title="Account">?</div>
-    </div>
-    <div class="config-banner" id="config-banner" style="display:none;">&#9432; Running in local mode. Configure Firebase in <code>index.html</code> for cloud sync.</div>
-    <div id="app-body">
-        <div id="sidebar"><div class="sidebar-header"><h3>Songs</h3><button class="sidebar-new-btn" id="new-song-btn" title="New Song">+</button></div><div id="song-list"></div></div>
-        <div id="editor">
-            <div id="editor-toolbar">
-                <button class="toolbar-btn" id="insert-tab-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="2" x2="15" y2="2"/><line x1="1" y1="5" x2="15" y2="5"/><line x1="1" y1="8" x2="15" y2="8"/><line x1="1" y1="11" x2="15" y2="11"/><line x1="1" y1="14" x2="15" y2="14"/></svg>Insert Tab</button>
-                <div class="toolbar-sep"></div>
-                <button class="toolbar-btn" id="insert-section-btn"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><line x1="4" y1="7" x2="12" y2="7"/></svg>Section</button>
-                <div style="flex:1"></div>
-                <button class="toolbar-btn undo-redo-btn" id="global-undo-btn" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h9a3 3 0 0 1 0 6H9"/><polyline points="6 5 3 8 6 11"/></svg>Undo</button>
-                <button class="toolbar-btn undo-redo-btn" id="global-redo-btn" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 8H4a3 3 0 0 0 0 6h3"/><polyline points="10 5 13 8 10 11"/></svg>Redo</button>
-            </div>
-            <div id="editor-scroll"><div id="editor-content"></div></div>
-        </div>
-        <div id="chord-palette"><div class="palette-header">Chord Palette</div><div id="chord-palette-content"></div></div>
-    </div>
-    <div id="mobile-nav">
-        <button class="mob-tab active" data-panel="editor" id="mob-tab-editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span>Editor</span></button>
-        <button class="mob-tab" data-panel="sidebar" id="mob-tab-songs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Songs</span></button>
-        <button class="mob-tab" data-panel="chord-palette" id="mob-tab-chords"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Chords</span></button>
-    </div>
-</div>
-<div class="save-toast" id="save-toast">Saved</div>
-
-<script>
-(function(){
-'use strict';
-
-const FIREBASE_CONFIG = { apiKey:"AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE", authDomain:"freetabsforever.firebaseapp.com", projectId:"freetabsforever", storageBucket:"freetabsforever.firebasestorage.app", messagingSenderId:"1025078181302", appId:"1:1025078181302:web:2a6c6238c3c77e2c2a1517" };
-const firebaseConfigured = FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY';
-let auth, db;
-const EDITOR_PAD = 4, TAB_COLS = 28, TAB_STRINGS = ['e','B','G','D','A','E'];
-const CHORD_RE = /^[A-G][#b]?(m|maj|min|dim|aug|sus|add|M)?\d{0,2}(\/[A-G][#b]?)?$/;
-const KEY_CHORDS = {
-    'C':['C','Dm','Em','F','G','Am','Bdim'],'G':['G','Am','Bm','C','D','Em','F#dim'],
-    'D':['D','Em','F#m','G','A','Bm','C#dim'],'A':['A','Bm','C#m','D','E','F#m','G#dim'],
-    'E':['E','F#m','G#m','A','B','C#m','D#dim'],'F':['F','Gm','Am','Bb','C','Dm','Edim'],
-    'Bb':['Bb','Cm','Dm','Eb','F','Gm','Adim'],'Eb':['Eb','Fm','Gm','Ab','Bb','Cm','Ddim'],
-    'Ab':['Ab','Bbm','Cm','Db','Eb','Fm','Gdim'],
-};
-
-let state = {
-    user:null, songs:[], currentSongId:null, currentSong:null,
-    charWidth:9, saveTimeout:null, usedChords:[],
-    lastFocusedLineIdx:null, selAnchor:null, selFocus:null,
-    dragTabIdx:null, slurMode:null,
-    suggestionCounter:0,
-};
-
-// ═══ GLOBAL UNDO / REDO ═══
-const undoStack = []; // array of JSON strings (song snapshots)
-const redoStack = [];
-const UNDO_LIMIT = 80;
-let _snapshotTimer = null;
-let _lastSnapshot = '';
-
-function songToSnap() {
-    if (!state.currentSong) return '';
-    return JSON.stringify({ title: state.currentSong.title, lines: state.currentSong.lines });
-}
-function snapToSong(snap) {
-    return JSON.parse(snap);
-}
-
-// Take an immediate snapshot (call BEFORE a destructive action)
-function pushUndoSnapshot() {
-    if (!state.currentSong) return;
-    const snap = songToSnap();
-    if (snap === _lastSnapshot) return; // no change
-    undoStack.push(snap);
-    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-    redoStack.length = 0; // clear redo on new action
-    _lastSnapshot = snap;
-    updateUndoButtons();
-}
-
-// Debounced snapshot — called after every small edit (typing, etc.)
-function scheduleUndoSnapshot() {
-    clearTimeout(_snapshotTimer);
-    _snapshotTimer = setTimeout(pushUndoSnapshot, 600);
-}
-
-// Seed the very first snapshot when a song is loaded
-function seedUndoStack() {
-    undoStack.length = 0;
-    redoStack.length = 0;
-    _lastSnapshot = songToSnap();
-    undoStack.push(_lastSnapshot);
-    updateUndoButtons();
-}
-
-function globalUndo() {
-    if (undoStack.length <= 1 || !state.currentSong) return;
-    // Push current state if it's different from top of undo stack
-    const cur = songToSnap();
-    if (cur !== undoStack[undoStack.length - 1]) {
-        undoStack.push(cur);
-        if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-    }
-    redoStack.push(undoStack.pop()); // move current to redo
-    const prev = undoStack[undoStack.length - 1];
-    const restored = snapToSong(prev);
-    state.currentSong.title = restored.title;
-    state.currentSong.lines = restored.lines;
-    _lastSnapshot = prev;
-    document.getElementById('song-title-input').value = restored.title || '';
-    renderEditor(); scheduleSave(); updateUndoButtons();
-}
-
-function globalRedo() {
-    if (!redoStack.length || !state.currentSong) return;
-    const snap = redoStack.pop();
-    undoStack.push(snap);
-    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
-    const restored = snapToSong(snap);
-    state.currentSong.title = restored.title;
-    state.currentSong.lines = restored.lines;
-    _lastSnapshot = snap;
-    document.getElementById('song-title-input').value = restored.title || '';
-    renderEditor(); scheduleSave(); updateUndoButtons();
-}
-
-function updateUndoButtons() {
-    const ub = document.getElementById('global-undo-btn');
-    const rb = document.getElementById('global-redo-btn');
-    if (ub) ub.disabled = undoStack.length <= 1;
-    if (rb) rb.disabled = redoStack.length === 0;
-}
-
-// ═══ CUSTOM MODAL ═══
-function showModal({icon, title, message, inputVal, placeholder, confirmText, confirmClass, onConfirm, onCancel}) {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    let inputEl = null;
-    overlay.innerHTML = '<div class="modal-box">' +
-        (icon ? '<div class="modal-icon">'+icon+'</div>' : '') +
-        '<div class="modal-title">'+title+'</div>' +
-        (message ? '<div class="modal-msg">'+message+'</div>' : '') +
-        (inputVal !== undefined ? '<input class="modal-input" type="text" value="'+esc(inputVal)+'"'+(placeholder?' placeholder="'+esc(placeholder)+'"':'')+' spellcheck="false">' : '') +
-        '<div class="modal-actions">' +
-        '<button class="modal-btn cancel-btn">Cancel</button>' +
-        '<button class="modal-btn '+(confirmClass||'primary')+' confirm-btn">'+(confirmText||'OK')+'</button>' +
-        '</div></div>';
-    document.body.appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('visible'));
-
-    inputEl = overlay.querySelector('.modal-input');
-    if (inputEl) { inputEl.focus(); inputEl.select(); }
-
-    function close(result) {
-        overlay.classList.remove('visible');
-        setTimeout(() => overlay.remove(), 160);
-        return result;
-    }
-
-    overlay.querySelector('.cancel-btn').addEventListener('click', () => {
-        close(); if (onCancel) onCancel();
-    });
-    overlay.querySelector('.confirm-btn').addEventListener('click', () => {
-        const val = inputEl ? inputEl.value : true;
-        close(); if (onConfirm) onConfirm(val);
-    });
-    overlay.addEventListener('click', e => {
-        if (e.target === overlay) { close(); if (onCancel) onCancel(); }
-    });
-    // Enter / Escape
-    function onKey(e) {
-        if (e.key === 'Enter') { e.preventDefault(); const val = inputEl ? inputEl.value : true; close(); overlay.removeEventListener('keydown', onKey); if (onConfirm) onConfirm(val); }
-        if (e.key === 'Escape') { close(); overlay.removeEventListener('keydown', onKey); if (onCancel) onCancel(); }
-    }
-    overlay.addEventListener('keydown', onKey);
-    // Focus trap
-    overlay.querySelector('.confirm-btn').focus();
-    if (inputEl) inputEl.focus();
-}
-
-// Tab-level undo/redo (kept for per-block undo inside tab toolbar)
-const tabHistory = new WeakMap();
-function getTabHist(line) { if(!tabHistory.has(line)) tabHistory.set(line,{stack:[JSON.parse(JSON.stringify(line.data))],ptr:0}); return tabHistory.get(line); }
-function pushTabState(line) { const h=getTabHist(line); h.stack=h.stack.slice(0,h.ptr+1); h.stack.push(JSON.parse(JSON.stringify(line.data))); h.ptr=h.stack.length-1; if(h.stack.length>50){h.stack.shift();h.ptr--;} }
-function tabUndo(line) { const h=getTabHist(line); if(h.ptr<=0) return false; h.ptr--; line.data=JSON.parse(JSON.stringify(h.stack[h.ptr])); return true; }
-function tabRedo(line) { const h=getTabHist(line); if(h.ptr>=h.stack.length-1) return false; h.ptr++; line.data=JSON.parse(JSON.stringify(h.stack[h.ptr])); return true; }
-
-// ═══ INIT ═══
-// ═══ MOBILE NAV ═══
-function initMobileNav() {
-    const nav = document.getElementById('mobile-nav');
-    if (!nav) return;
-    nav.querySelectorAll('.mob-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchMobilePanel(tab.dataset.panel));
-    });
-}
-
-function switchMobilePanel(panel) {
-    const sidebar = document.getElementById('sidebar');
-    const editor = document.getElementById('editor');
-    const palette = document.getElementById('chord-palette');
-    // Reset all
-    sidebar.classList.remove('mob-visible');
-    editor.classList.add('mob-hidden');
-    palette.classList.remove('mob-visible');
-    // Show selected
-    if (panel === 'sidebar') sidebar.classList.add('mob-visible');
-    else if (panel === 'chord-palette') palette.classList.add('mob-visible');
-    else editor.classList.remove('mob-hidden'); // editor is default
-    // Update tab active state
-    document.querySelectorAll('.mob-tab').forEach(t => t.classList.toggle('active', t.dataset.panel === panel));
-}
-
-function init() {
-    if (firebaseConfigured) { firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
-    else { document.getElementById('config-banner').style.display='flex'; enterApp(null); }
-    document.fonts.ready.then(()=>{ state.charWidth=measureCharWidth(); if(state.currentSong) renderEditor(); });
-    document.getElementById('google-signin-btn').addEventListener('click',signIn);
-    document.getElementById('skip-auth-btn').addEventListener('click',()=>enterApp(null));
-    document.getElementById('new-song-btn').addEventListener('click',createNewSong);
-    document.getElementById('save-btn').addEventListener('click',()=>saveSong());
-    document.getElementById('song-title-input').addEventListener('input',onTitleChange);
-    document.getElementById('user-avatar').addEventListener('click',toggleUserMenu);
-    document.getElementById('insert-tab-btn').addEventListener('click',insertTabBlock);
-    document.getElementById('insert-section-btn').addEventListener('click',insertSection);
-    document.getElementById('global-undo-btn').addEventListener('click', globalUndo);
-    document.getElementById('global-redo-btn').addEventListener('click', globalRedo);
-    initMobileNav();
-    document.addEventListener('keydown', globalKeydown);
-    document.addEventListener('mouseup', ()=>{ state._mouseSelecting=false; });
-    // Fallback mouse-move selection on editor container (catches drags across contenteditable boundaries)
-    const ec = document.getElementById('editor-content');
-    ec.addEventListener('mousemove', e=>{
-        if(!state._mouseSelecting || e.buttons!==1 || state.selAnchor===null) return;
-        const children = Array.from(ec.children);
-        for(let i=children.length-1; i>=0; i--){
-            const rect = children[i].getBoundingClientRect();
-            if(e.clientY >= rect.top){ if(i!==state.selAnchor){ state.selFocus=i; updateSelectionHL(); } break; }
-        }
-    });
-    // Tab block drag: editor-content level handlers
-    ec.addEventListener('dragover', onEditorDragOver);
-    ec.addEventListener('drop', onEditorDrop);
-    ec.addEventListener('dragleave', ()=>removeDropIndicator());
-}
-
-function globalKeydown(e) {
-    // Escape exits slur mode
-    if (e.key==='Escape' && state.slurMode) { exitSlurMode(); return; }
-    if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveSong(); }
-    // Global undo/redo
-    if ((e.ctrlKey||e.metaKey) && e.key==='z' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); globalUndo(); return; }
-    if ((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.key==='Z') || (e.key==='z' && e.shiftKey))) { e.preventDefault(); e.stopPropagation(); globalRedo(); return; }
-    // Multi-line selection: Delete / Backspace / Escape (global so it works regardless of focus)
-    if (hasMultiSel()) {
-        if (e.key==='Delete' || e.key==='Backspace') { e.preventDefault(); e.stopPropagation(); batchDeleteSelection(); return; }
-        if (e.key==='Escape') { e.preventDefault(); clearSelection(); return; }
-        // Typing replaces selection
-        if (!e.shiftKey && !e.ctrlKey && !e.metaKey && e.key.length===1) { e.preventDefault(); e.stopPropagation(); batchDeleteSelection(); return; }
-    }
-    // Ctrl+A: select all lines if focus is in editor
-    if ((e.ctrlKey||e.metaKey) && e.key==='a' && state.currentSong) {
-        const ae = document.activeElement;
-        if (ae && (ae.closest('#editor-content') || ae.closest('#editor-scroll'))) {
-            e.preventDefault();
-            state.selAnchor = 0; state.selFocus = state.currentSong.lines.length - 1;
-            updateSelectionHL();
-        }
-    }
-}
-
-function measureCharWidth() { const s=document.createElement('span'); s.style.cssText="font-family:'Fira Code',Consolas,Monaco,monospace;font-size:15px;position:absolute;visibility:hidden;white-space:pre"; s.textContent='MMMMMMMMMM'; document.body.appendChild(s); const w=s.getBoundingClientRect().width/10; document.body.removeChild(s); return w; }
-
-// ═══ AUTH ═══
-function signIn(){ if(!firebaseConfigured)return; auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e=>console.error('Auth:',e)); }
-function signOut(){ if(firebaseConfigured&&auth) auth.signOut(); state.user=null;state.songs=[];state.currentSongId=null;state.currentSong=null; document.getElementById('main-app').style.display='none'; document.getElementById('auth-screen').style.display='flex'; }
-function onAuthStateChanged(u){ if(u) enterApp(u); else{ document.getElementById('auth-screen').style.display='flex'; document.getElementById('main-app').style.display='none'; } }
-function enterApp(u){ state.user=u; document.getElementById('auth-screen').style.display='none'; document.getElementById('main-app').style.display='flex'; const av=document.getElementById('user-avatar'); if(u&&u.photoURL) av.innerHTML='<img src="'+u.photoURL+'" style="width:32px;height:32px;border-radius:50%">'; else if(u) av.textContent=(u.displayName||u.email||'?')[0].toUpperCase(); else{av.textContent='L';av.title='Local mode';} loadSongs(); renderChordPalette(); }
-function toggleUserMenu(){
-    if(!firebaseConfigured||!state.user) return;
-    showModal({
-        icon:'👋', title:'Sign out?',
-        message:'You\'ll need to sign in again to access your cloud-synced songs.',
-        confirmText:'Sign Out', confirmClass:'danger',
-        onConfirm: signOut
-    });
-}
-
-// ═══ STORAGE ═══
-async function loadSongs(){ if(state.user&&firebaseConfigured&&db){try{const s=await db.collection('users').doc(state.user.uid).collection('songs').orderBy('updatedAt','desc').get();state.songs=s.docs.map(d=>({id:d.id,title:d.data().title||'Untitled',updatedAt:d.data().updatedAt,preview:getPreview(d.data())}));}catch(e){console.error(e);}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};state.songs=Object.entries(s).map(([id,d])=>({id,title:d.title||'Untitled',updatedAt:d.updatedAt||0,preview:getPreview(d)}));state.songs.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));} renderSidebar(); if(state.songs.length>0&&!state.currentSongId) selectSong(state.songs[0].id); else if(!state.songs.length) renderEditorEmpty(); }
-function getPreview(d){ if(!d||!d.lines)return''; for(const l of d.lines){if(l.type==='tab')continue;const t=(l.lyrics||'').trim();if(t&&!/^\[.+\]$/.test(t))return t.substring(0,60);} return''; }
-async function saveSong(){ if(!state.currentSong||!state.currentSongId)return; clearTimeout(state.saveTimeout); state.currentSong.updatedAt=Date.now(); state.currentSong.title=document.getElementById('song-title-input').value||'Untitled'; try{if(state.user&&firebaseConfigured&&db){await db.collection('users').doc(state.user.uid).collection('songs').doc(state.currentSongId).set(cleanForSave(state.currentSong));}else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};s[state.currentSongId]=cleanForSave(state.currentSong);localStorage.setItem('openchord_songs',JSON.stringify(s));} showSaveToast();}catch(e){console.error('Save:',e);} const idx=state.songs.findIndex(s=>s.id===state.currentSongId); const en={id:state.currentSongId,title:state.currentSong.title,updatedAt:state.currentSong.updatedAt,preview:getPreview(state.currentSong)}; if(idx>=0)state.songs[idx]=en;else state.songs.unshift(en); renderSidebar(); updateQuickChords(); }
-function cleanForSave(song){
-    const c=JSON.parse(JSON.stringify(song));
-    (c.lines||[]).forEach(l=>{
-        delete l._slurPicking;
-        // Firestore cannot store nested arrays (2D array).
-        // Serialize tab data & slurs as JSON strings for safe storage.
-        if(l.type==='tab'){
-            if(Array.isArray(l.data)) l.tabData=JSON.stringify(l.data);
-            delete l.data;
-            if(Array.isArray(l.slurs)) l.slurData=JSON.stringify(l.slurs);
-            delete l.slurs;
-        }
-    });
-    return c;
-}
-function scheduleSave(){ clearTimeout(state.saveTimeout); document.getElementById('save-indicator').textContent='Unsaved changes'; document.getElementById('save-indicator').classList.remove('saved'); state.saveTimeout=setTimeout(saveSong,2000); scheduleUndoSnapshot(); }
-function showSaveToast(){ document.getElementById('save-indicator').textContent='Saved'; document.getElementById('save-indicator').classList.add('saved'); const t=document.getElementById('save-toast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1500); }
-async function selectSong(id){ state.currentSongId=id; if(state.user&&firebaseConfigured&&db){try{const d=await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get();state.currentSong=d.exists?d.data():null;}catch(e){state.currentSong=null;}} else{const r=localStorage.getItem('openchord_songs');state.currentSong=(r?JSON.parse(r):{})[id]||null;} if(state.currentSong){state.currentSong.lines=(state.currentSong.lines||[]).map(l=>{if(!l.type)l.type='lyrics';if(l.type==='tab'){if(!l.data&&l.tabData){try{l.data=JSON.parse(l.tabData);}catch(e){l.data=makeEmptyTabData();}delete l.tabData;}if(!l.data)l.data=makeEmptyTabData();if(!l.slurs&&l.slurData){try{l.slurs=JSON.parse(l.slurData);}catch(e){l.slurs=[];}delete l.slurData;}if(!l.slurs)l.slurs=[];if(!l.tuning)l.tuning=[...TAB_STRINGS];}return l;});document.getElementById('song-title-input').value=state.currentSong.title||'';renderEditor();updateQuickChords();seedUndoStack();} renderSidebar(); if(window.innerWidth<=768) switchMobilePanel('editor'); }
-function createNewSong(){ const id='song_'+Date.now()+'_'+Math.random().toString(36).substr(2,6); state.currentSong={title:'Untitled Song',lines:[{type:'lyrics',lyrics:'',chords:[]}],updatedAt:Date.now()}; state.currentSongId=id; state.songs.unshift({id,title:'Untitled Song',updatedAt:Date.now(),preview:''}); document.getElementById('song-title-input').value='Untitled Song'; renderEditor();renderSidebar();saveSong();seedUndoStack(); if(window.innerWidth<=768) switchMobilePanel('editor'); setTimeout(()=>focusLine(0,0),50); }
-function deleteSong(id){
-    const song = state.songs.find(s=>s.id===id);
-    showModal({
-        icon:'🗑️', title:'Delete this song?',
-        message:'<b style="color:var(--text)">'+ esc(song?song.title:'this song') +'</b> will be permanently removed. This can\'t be undone.',
-        confirmText:'Delete', confirmClass:'danger',
-        onConfirm: ()=>doDeleteSong(id)
-    });
-}
-async function doDeleteSong(id){ if(state.user&&firebaseConfigured&&db){try{await db.collection('users').doc(state.user.uid).collection('songs').doc(id).delete();}catch(e){}} else{const r=localStorage.getItem('openchord_songs');const s=r?JSON.parse(r):{};delete s[id];localStorage.setItem('openchord_songs',JSON.stringify(s));} state.songs=state.songs.filter(s=>s.id!==id); if(state.currentSongId===id){state.currentSongId=null;state.currentSong=null;if(state.songs.length)selectSong(state.songs[0].id);else renderEditorEmpty();} renderSidebar(); }
-function onTitleChange(){ if(state.currentSong){state.currentSong.title=document.getElementById('song-title-input').value;scheduleSave();} }
-
-// ═══ SIDEBAR ═══
-function renderSidebar(){ const l=document.getElementById('song-list'); if(!state.songs.length){l.innerHTML='<div class="sidebar-empty">No songs yet.<br>Click + to create one.</div>';return;} l.innerHTML=state.songs.map(s=>'<div class="song-item '+(s.id===state.currentSongId?'active':'')+'" data-id="'+s.id+'"><div class="song-item-title">'+esc(s.title||'Untitled')+'</div><div class="song-item-meta">'+(s.preview?esc(s.preview):'Empty song')+'</div><button class="song-item-delete" data-del="'+s.id+'" title="Delete">&times;</button></div>').join(''); l.querySelectorAll('.song-item').forEach(el=>el.addEventListener('click',e=>{if(!e.target.closest('.song-item-delete'))selectSong(el.dataset.id);})); l.querySelectorAll('.song-item-delete').forEach(b=>b.addEventListener('click',e=>{e.stopPropagation();deleteSong(b.dataset.del);})); }
-
-// ═══ EDITOR ═══
-function renderEditorEmpty(){ document.getElementById('editor-toolbar').style.display='none'; const c=document.getElementById('editor-content'); c.innerHTML='<div class="editor-empty"><div style="font-size:48px;opacity:0.3">&#9835;</div><div>Select a song or create a new one</div><button class="editor-empty-btn" id="ec-btn">+ Create Your First Song</button></div>'; document.getElementById('ec-btn').addEventListener('click',createNewSong); document.getElementById('song-title-input').value=''; }
-function renderEditor(){ document.getElementById('editor-toolbar').style.display='flex'; const c=document.getElementById('editor-content'); c.innerHTML=''; if(!state.currentSong){renderEditorEmpty();return;} state.currentSong.lines.forEach((line,i)=>{ if(line.type==='tab') c.appendChild(buildTabBlock(line,i)); else c.appendChild(buildLinePair(line,i)); }); clearSelection(); }
-
-// ─── Multi-line selection ───
-function hasMultiSel(){ return state.selAnchor!==null && state.selFocus!==null && state.selAnchor!==state.selFocus; }
-function selRange(){ if(!hasMultiSel()) return null; return [Math.min(state.selAnchor,state.selFocus), Math.max(state.selAnchor,state.selFocus)]; }
-function clearSelection(){ state.selAnchor=null; state.selFocus=null; updateSelectionHL(); }
-function updateSelectionHL(){ const els=document.querySelectorAll('#editor-content > *'); const r=selRange(); els.forEach((el,i)=>{ if(r && i>=r[0] && i<=r[1]) el.classList.add('line-selected'); else el.classList.remove('line-selected'); }); }
-function batchDeleteSelection(){ const r=selRange(); if(!r) return; pushUndoSnapshot(); state.currentSong.lines.splice(r[0], r[1]-r[0]+1); if(!state.currentSong.lines.length) state.currentSong.lines.push({type:'lyrics',lyrics:'',chords:[]}); clearSelection(); renderEditor(); const fi=Math.min(r[0], state.currentSong.lines.length-1); focusLine(fi,0); scheduleSave(); }
-
-// ─── Lyric line pairs ───
-function buildLinePair(line, idx) {
-    const pair=document.createElement('div'); pair.className='line-pair'; pair.dataset.index=idx;
-    const ca=document.createElement('div'); ca.className='chord-area';
-    renderChordBadges(ca, line.chords||[]);
-    setupChordAreaEvents(ca, idx);
-    const ly=document.createElement('div'); ly.className='lyric-line'; ly.contentEditable='true'; ly.spellcheck=false;
-    ly.textContent=line.lyrics||'';
-    if(/^\[.+\]$/.test((line.lyrics||'').trim())) ly.classList.add('section-label');
-    setupLyricEvents(ly, idx);
-    pair.appendChild(ca); pair.appendChild(ly); return pair;
-}
-
-function renderChordBadges(ca, chords) {
-    ca.querySelectorAll('.chord-badge').forEach(b=>b.remove());
-    chords.forEach(chord=>{
-        const b=document.createElement('span'); b.className='chord-badge'; b.textContent=chord.name;
-        b.style.left=(EDITOR_PAD+chord.pos*state.charWidth)+'px';
-        let ct=null;
-        b.addEventListener('click',e=>{ e.stopPropagation(); clearTimeout(ct); ct=setTimeout(()=>{ editChordBadge(ca,chord,parseInt(ca.parentElement.dataset.index)); },280); });
-        b.addEventListener('dblclick',e=>{ e.stopPropagation(); clearTimeout(ct); removeChord(parseInt(ca.parentElement.dataset.index),chord); });
-        ca.appendChild(b);
-    });
-}
-
-function setupChordAreaEvents(ca, li) {
-    ca.addEventListener('click',e=>{ if(e.target.classList.contains('chord-badge'))return; const x=e.clientX-ca.getBoundingClientRect().left-EDITOR_PAD; showChordInput(ca,li,Math.max(0,Math.round(x/state.charWidth)),null); });
-    ca.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';ca.classList.add('drag-over');});
-    ca.addEventListener('dragleave',()=>ca.classList.remove('drag-over'));
-    ca.addEventListener('drop',e=>{e.preventDefault();ca.classList.remove('drag-over');const n=e.dataTransfer.getData('text/plain');if(!n)return;const x=e.clientX-ca.getBoundingClientRect().left-EDITOR_PAD;addChord(li,n,Math.max(0,Math.round(x/state.charWidth)));});
-}
-
-// ─── Chord input (with smart placeholder + delete-on-empty) ───
-function getChordSuggestion() {
-    const used = collectUsedChords();
-    const key = detectKey(used);
-    let pool = [];
-    if (key && KEY_CHORDS[key]) { pool = [...used, ...KEY_CHORDS[key].filter(c=>!used.includes(c))]; }
-    else if (used.length) { pool = used; }
-    else { pool = ['Am','C','G','F','Em','Dm']; }
-    if (!pool.length) return 'Am';
-    return pool[state.suggestionCounter++ % pool.length];
-}
-
-function showChordInput(ca, li, charPos, editingChord) {
-    const old=ca.querySelector('.chord-input-popup'); if(old) old.remove();
-    const inp=document.createElement('input'); inp.className='chord-input-popup'; inp.type='text';
-    inp.placeholder=getChordSuggestion();
-    inp.style.left=(EDITOR_PAD+charPos*state.charWidth)+'px';
-    let committed=false;
-    function commit(){
-        if(committed) return; committed=true;
-        const n=inp.value.trim();
-        if(n) addChord(li, n, charPos);
-        else if(editingChord) removeChord(li, editingChord); // empty = delete
-        if(inp.parentElement) inp.remove();
-    }
-    inp.addEventListener('keydown',e=>{
-        if(e.key==='Enter'){e.preventDefault();commit();}
-        if(e.key==='Escape'){committed=true;inp.remove();}
-        if(e.key==='Tab'){e.preventDefault();const n=inp.value.trim();if(n){addChord(li,n,charPos);charPos+=n.length+1;inp.value='';inp.placeholder=getChordSuggestion();inp.style.left=(EDITOR_PAD+charPos*state.charWidth)+'px';committed=false;}}
-    });
-    inp.addEventListener('blur',()=>setTimeout(commit,100));
-    ca.appendChild(inp); inp.focus();
-}
-
-function editChordBadge(ca, chord, li) {
-    showChordInput(ca, li, chord.pos, chord); // pass chord for delete-on-empty
-    setTimeout(()=>{ const i=ca.querySelector('.chord-input-popup'); if(i){i.value=chord.name;i.select();} },10);
-}
-
-// ─── Chord CRUD ───
-function addChord(li,name,pos){ const line=state.currentSong.lines[li]; if(!line||line.type==='tab')return; if(!line.chords)line.chords=[]; line.chords=line.chords.filter(c=>{const cE=c.pos+c.name.length,nE=pos+name.length;return!(c.pos<nE&&pos<cE);}); line.chords.push({name,pos});line.chords.sort((a,b)=>a.pos-b.pos); const pair=document.querySelectorAll('#editor-content > *')[li]; if(pair&&pair.classList.contains('line-pair')) renderChordBadges(pair.querySelector('.chord-area'),line.chords); scheduleSave();updateQuickChords(); }
-function removeChord(li,chord){ const line=state.currentSong.lines[li]; if(!line)return; line.chords=(line.chords||[]).filter(c=>!(c.name===chord.name&&c.pos===chord.pos)); const pair=document.querySelectorAll('#editor-content > *')[li]; if(pair&&pair.classList.contains('line-pair')) renderChordBadges(pair.querySelector('.chord-area'),line.chords); scheduleSave();updateQuickChords(); }
-
-// ─── Lyric events (with multi-line selection) ───
-function setupLyricEvents(ly, li) {
-    ly.addEventListener('focus',()=>{ state.lastFocusedLineIdx=li; });
-    ly.addEventListener('mousedown',e=>{
-        if(e.shiftKey && state.selAnchor!==null) { e.preventDefault(); state.selFocus=li; updateSelectionHL(); return; }
-        state.selAnchor=li; state.selFocus=null; state._mouseSelecting=true; updateSelectionHL();
-    });
-    ly.addEventListener('mouseenter',e=>{ if(state._mouseSelecting && e.buttons===1 && state.selAnchor!==null && state.selAnchor!==li){ state.selFocus=li; updateSelectionHL(); } });
-
-    ly.addEventListener('input',()=>{ const t=ly.textContent; state.currentSong.lines[li].lyrics=t; if(/^\[.+\]$/.test(t.trim())) ly.classList.add('section-label'); else ly.classList.remove('section-label'); scheduleSave(); });
-
-    ly.addEventListener('keydown',e=>{
-        // Multi-line selection actions
-        if(hasMultiSel()){
-            if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();batchDeleteSelection();return;}
-            if(!e.shiftKey&&!e.ctrlKey&&!e.metaKey&&e.key.length===1){batchDeleteSelection();return;} // typing replaces
-        }
-        // Shift+arrow extends selection
-        if(e.shiftKey&&(e.key==='ArrowDown'||e.key==='ArrowUp')){
-            e.preventDefault();
-            if(state.selAnchor===null) state.selAnchor=li;
-            if(state.selFocus===null) state.selFocus=li;
-            state.selFocus+=e.key==='ArrowDown'?1:-1;
-            state.selFocus=Math.max(0,Math.min(state.selFocus,state.currentSong.lines.length-1));
-            updateSelectionHL(); return;
-        }
-        // Normal arrow clears selection
-        if((e.key==='ArrowUp'||e.key==='ArrowDown')&&!e.shiftKey&&hasMultiSel()){ clearSelection(); }
-
-        if(e.key==='Enter'){ e.preventDefault(); pushUndoSnapshot(); const off=getCaretOffset(ly),txt=ly.textContent; state.currentSong.lines[li].lyrics=txt.substring(0,off);ly.textContent=txt.substring(0,off); const old=state.currentSong.lines[li].chords||[]; state.currentSong.lines[li].chords=old.filter(c=>c.pos<off); const moved=old.filter(c=>c.pos>=off).map(c=>({...c,pos:c.pos-off})); state.currentSong.lines.splice(li+1,0,{type:'lyrics',lyrics:txt.substring(off),chords:moved}); renderEditor();focusLine(li+1,0);scheduleSave(); }
-        if(e.key==='Backspace'&&getCaretOffset(ly)===0&&li>0){ const prev=state.currentSong.lines[li-1]; if(prev.type!=='lyrics')return; e.preventDefault(); pushUndoSnapshot(); const cp=prev.lyrics.length;const cur=state.currentSong.lines[li]; prev.lyrics+=cur.lyrics; (cur.chords||[]).forEach(c=>{prev.chords=prev.chords||[];prev.chords.push({...c,pos:c.pos+cp});}); state.currentSong.lines.splice(li,1); renderEditor();focusLine(li-1,cp);scheduleSave(); }
-        if(e.key==='ArrowUp'&&!e.shiftKey&&li>0){e.preventDefault();focusLyricNear(li,-1,getCaretOffset(ly));}
-        if(e.key==='ArrowDown'&&!e.shiftKey&&li<state.currentSong.lines.length-1){e.preventDefault();focusLyricNear(li,1,getCaretOffset(ly));}
-    });
-
-    ly.addEventListener('paste',e=>{ e.preventDefault(); const text=(e.clipboardData||window.clipboardData).getData('text/plain'); const lines=text.split(/\r?\n/); if(lines.length<=1){document.execCommand('insertText',false,text);state.currentSong.lines[li].lyrics=ly.textContent;scheduleSave();return;} const off=getCaretOffset(ly),cur=ly.textContent,before=cur.substring(0,off),after=cur.substring(off); const parsed=parseChordSheet(lines); parsed[0].lyrics=before+parsed[0].lyrics; parsed[0].chords=parsed[0].chords.map(c=>({...c,pos:c.pos+before.length})); const eb=(state.currentSong.lines[li].chords||[]).filter(c=>c.pos<off); parsed[0].chords=[...eb,...parsed[0].chords].sort((a,b)=>a.pos-b.pos); parsed[parsed.length-1].lyrics+=after; state.currentSong.lines.splice(li,1,...parsed); renderEditor();focusLine(li+parsed.length-1,parsed[parsed.length-1].lyrics.length-after.length);scheduleSave(); });
-}
-
-// ═══ TAB BLOCKS ═══
-function makeEmptyTabData(){ return TAB_STRINGS.map(()=>new Array(TAB_COLS).fill('')); }
-
-function insertTabBlock(){ if(!state.currentSong)return; pushUndoSnapshot(); let at=state.currentSong.lines.length; if(state.lastFocusedLineIdx!==null&&state.lastFocusedLineIdx<state.currentSong.lines.length) at=state.lastFocusedLineIdx+1; state.currentSong.lines.splice(at,0,{type:'tab',tuning:[...TAB_STRINGS],data:makeEmptyTabData(),slurs:[]}); renderEditor();scheduleSave(); const els=document.querySelectorAll('#editor-content > *'); if(els[at]) els[at].scrollIntoView({behavior:'smooth',block:'center'}); }
-function insertSection(){
-    if(!state.currentSong) return;
-    showModal({
-        icon:'📑', title:'Add Section',
-        message:'Name this section (e.g. Chorus, Verse 2, Bridge)',
-        inputVal:'Chorus', placeholder:'Section name',
-        confirmText:'Add', confirmClass:'primary',
-        onConfirm: (label) => {
-            if(!label||!label.trim()) return;
-            pushUndoSnapshot();
-            let at=state.currentSong.lines.length;
-            if(state.lastFocusedLineIdx!==null&&state.lastFocusedLineIdx<state.currentSong.lines.length) at=state.lastFocusedLineIdx+1;
-            state.currentSong.lines.splice(at,0,{type:'lyrics',lyrics:'['+label.trim()+']',chords:[]});
-            renderEditor(); scheduleSave();
-        }
-    });
-}
-
-function buildTabBlock(line, index) {
-    const block=document.createElement('div'); block.className='tab-block'; block.dataset.index=index;
-    // Header with drag handle
-    const header=document.createElement('div'); header.className='tab-block-header';
-    const handle=document.createElement('div'); handle.className='tab-drag-handle'; handle.draggable=true; handle.title='Drag to reorder';
-    handle.innerHTML='<span></span><span></span><span></span>';
-    handle.addEventListener('dragstart',e=>{ state.dragTabIdx=index; block.classList.add('dragging-tab'); e.dataTransfer.setData('application/x-tab-drag',String(index)); e.dataTransfer.effectAllowed='move'; });
-    handle.addEventListener('dragend',()=>{ state.dragTabIdx=null; block.classList.remove('dragging-tab'); removeDropIndicator(); });
-    header.appendChild(handle);
-    const lbl=document.createElement('div'); lbl.className='tab-block-label'; lbl.textContent='Guitar Tab'; header.appendChild(lbl);
-    const actions=document.createElement('div'); actions.className='tab-block-actions';
-    const addBtn=document.createElement('button'); addBtn.className='tab-block-btn'; addBtn.textContent='+ Measures';
-    addBtn.addEventListener('click',()=>{ pushTabState(line); line.data.forEach(r=>{for(let i=0;i<8;i++)r.push('');}); renderEditor();scheduleSave(); });
-    const delBtn=document.createElement('button'); delBtn.className='tab-block-btn danger'; delBtn.textContent='Delete';
-    delBtn.addEventListener('click',()=>{ pushUndoSnapshot(); state.currentSong.lines.splice(index,1); renderEditor();scheduleSave(); });
-    actions.appendChild(addBtn); actions.appendChild(delBtn); header.appendChild(actions);
-    block.appendChild(header);
-
-    // Symbols toolbar
-    const symBar=document.createElement('div'); symBar.className='tab-symbols-bar';
-    const symbols=[
-        {label:'Slur',key:'slur',drag:false,title:'Drag between two notes on the same string'},null,
-        {label:'b',title:'Bend – drag onto a note (e.g. 7→7b)',key:'b',drag:true},
-        {label:'~',title:'Vibrato – drag onto a note',key:'~',drag:true},
-        {label:'x',title:'Muted/Dead note – drag onto a cell',key:'x',drag:true},
-        {label:'t',title:'Tap – drag onto a note',key:'t',drag:true},
-        {label:'r',title:'Release – drag onto a note',key:'r',drag:true},
-        {label:'P.M.',title:'Palm Mute – drag onto a note',key:'PM',drag:true},
-        {label:'<>',title:'Harmonics – wraps note in < > brackets',key:'harm',drag:true},
-        {label:'()',title:'Ghost Note – wraps note in ( ) brackets',key:'ghost',drag:true},null,
-        {label:'↩',title:'Undo',key:'undo',cls:'undo-redo'},{label:'↪',title:'Redo',key:'redo',cls:'undo-redo'},
-    ];
-    symbols.forEach(sym=>{
-        if(!sym){const sep=document.createElement('div');sep.className='tab-sym-sep';symBar.appendChild(sep);return;}
-        const btn=document.createElement('button'); btn.className='tab-sym-btn'+(sym.cls?' '+sym.cls:'');
-        btn.textContent=sym.label; btn.title=sym.title||sym.label;
-        // Draggable per-cell symbols
-        if(sym.drag){
-            btn.draggable=true;
-            btn.addEventListener('dragstart',e=>{
-                e.dataTransfer.setData('application/x-tab-sym',sym.key);
-                e.dataTransfer.effectAllowed='copy';
-                e.dataTransfer.setDragImage(btn,btn.offsetWidth/2,btn.offsetHeight/2);
-            });
-        }
-        btn.addEventListener('click',()=>handleTabSymbol(sym.key, line, index, btn, block));
-        symBar.appendChild(btn);
-    });
-    block.appendChild(symBar);
-
-    // Body
-    const body=document.createElement('div'); body.className='tab-body';
-    const placeholder=document.createElement('div'); placeholder.className='tab-placeholder'; placeholder.textContent='Click a string position and type a fret number. Arrow keys to move.'; body.appendChild(placeholder);
-    const grid=document.createElement('div'); grid.className='tab-grid';
-    const numCols=line.data[0]?line.data[0].length:TAB_COLS;
-
-    line.tuning.forEach((str,row)=>{
-        const rowEl=document.createElement('div'); rowEl.className='tab-row';
-        const label=document.createElement('span'); label.className='tab-string-label'; label.textContent=str; rowEl.appendChild(label);
+        const label=document.createElement('span'); label.className='tab-string-label'; label.textContent=str; label.title='Click to change tuning';
+        label.addEventListener('click',()=>{
+            const inp=document.createElement('input'); inp.className='tab-tuning-input'; inp.value=str; inp.maxLength=2;
+            label.replaceWith(inp); inp.focus(); inp.select();
+            const commit=()=>{ const v=inp.value.trim()||str; line.tuning[row]=v; scheduleSave(); renderEditor(); };
+            inp.addEventListener('blur',commit);
+            inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();commit();} if(e.key==='Escape'){e.preventDefault();line.tuning[row]=str;renderEditor();} });
+        });
+        rowEl.appendChild(label);
         const cellsRow=document.createElement('div'); cellsRow.className='tab-cells-row';
         for(let col=0;col<numCols;col++){
             const cell=document.createElement('div'); cell.className='tab-cell'; cell.tabIndex=-1;
