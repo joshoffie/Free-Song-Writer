@@ -188,7 +188,7 @@
 </head>
 <body>
 <div id="auth-screen">
-    <div class="auth-logo">Open<span>Chord</span></div>
+    <div class="auth-logo">free<span>tabs</span><em style="font-style:italic;color:var(--tab-active)">forever</em></div>
     <div class="auth-subtitle">Free songwriting. Unlimited songs. No paywall.</div>
     <button class="auth-btn" id="google-signin-btn"><svg viewBox="0 0 24 24"><path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34a853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fbbc05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>Sign in with Google</button>
     <div class="auth-skip" id="skip-auth-btn">Continue without account (local storage only)</div>
@@ -226,17 +226,8 @@
 (function(){
 'use strict';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE",
-  authDomain: "freetabsforever.firebaseapp.com",
-  projectId: "freetabsforever",
-  storageBucket: "freetabsforever.firebasestorage.app",
-  messagingSenderId: "1025078181302",
-  appId: "1:1025078181302:web:2a6c6238c3c77e2c2a1517",
-  measurementId: "G-VHD2ZM4MDL"
-};
-
-const firebaseConfigured = firebaseConfig.apiKey !== 'YOUR_API_KEY';
+const FIREBASE_CONFIG = { apiKey:"YOUR_API_KEY", authDomain:"YOUR_PROJECT.firebaseapp.com", projectId:"YOUR_PROJECT_ID", storageBucket:"YOUR_PROJECT.appspot.com", messagingSenderId:"000000000000", appId:"YOUR_APP_ID" };
+const firebaseConfigured = FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY';
 let auth, db;
 const EDITOR_PAD = 4, TAB_COLS = 28, TAB_STRINGS = ['e','B','G','D','A','E'];
 const CHORD_RE = /^[A-G][#b]?(m|maj|min|dim|aug|sus|add|M)?\d{0,2}(\/[A-G][#b]?)?$/;
@@ -345,7 +336,7 @@ function tabRedo(line) { const h=getTabHist(line); if(h.ptr>=h.stack.length-1) r
 
 // ═══ INIT ═══
 function init() {
-    if (firebaseConfigured) { firebase.initializeApp(firebaseConfig); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
+    if (firebaseConfigured) { firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
     else { document.getElementById('config-banner').style.display='flex'; enterApp(null); }
     document.fonts.ready.then(()=>{ state.charWidth=measureCharWidth(); if(state.currentSong) renderEditor(); });
     document.getElementById('google-signin-btn').addEventListener('click',signIn);
