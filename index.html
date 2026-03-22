@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenChord — Free Songwriting App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0d1117; --surface: #161b22; --surface-hover: #1c2129;
+            --surface-active: #22272e; --border: #30363d;
+            --text: #e6edf3; --text-muted: #8b949e; --text-dim: #484f58;
+            --chord-color: #58a6ff; --chord-bg: rgba(88,166,255,0.12);
+            --accent: #238636; --accent-hover: #2ea043; --accent-blue: #1f6feb;
+            --danger: #f85149; --section-color: #d2a8ff;
+            --tab-line: #4a5060; --tab-active: #f0883e;
+            --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'Fira Code', 'Consolas', 'Monaco', monospace;
+            --sidebar-w: 260px; --palette-w: 280px; --navbar-h: 56px;
+            --editor-font-size: 15px; --editor-line-height: 22px; --editor-pad: 4px;
+        }
+        html, body { height: 100%; overflow: hidden; }
+        body { font-family: var(--font-ui); background: var(--bg); color: var(--text); }
+
+        /* AUTH */
+        #auth-screen {
+            display: none; position: fixed; inset: 0; z-index: 1000;
+            background: var(--bg); flex-direction: column; align-items: center;
+            justify-content: center; gap: 32px;
+        }
+        .auth-logo { font-size: 48px; font-weight: 700; letter-spacing: -2px; }
+        .auth-logo span { color: var(--chord-color); }
+        .auth-subtitle { color: var(--text-muted); font-size: 18px; margin-top: -16px; }
+        .auth-btn {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px 32px; border-radius: 8px;
+            border: 1px solid var(--border); background: var(--surface);
+            color: var(--text); font-size: 16px; font-family: var(--font-ui); cursor: pointer;
+        }
+        .auth-btn:hover { background: var(--surface-hover); border-color: var(--text-muted); }
+        .auth-btn svg { width: 20px; height: 20px; }
+        .auth-skip { color: var(--text-muted); font-size: 14px; cursor: pointer; text-decoration: underline; }
+        .auth-skip:hover { color: var(--text); }
+
+        /* NAVBAR */
+        #navbar {
+            height: var(--navbar-h); background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; padding: 0 16px; gap: 16px;
+        }
+        .nav-logo { font-size: 20px; font-weight: 700; letter-spacing: -1px; white-space: nowrap; }
+        .nav-logo span { color: var(--chord-color); }
+        .nav-divider { width: 1px; height: 28px; background: var(--border); }
+        #song-title-input {
+            background: transparent; border: 1px solid transparent;
+            color: var(--text); font-size: 16px; font-family: var(--font-ui);
+            font-weight: 500; padding: 6px 10px; border-radius: 6px;
+            outline: none; flex: 1; min-width: 150px; max-width: 400px;
+        }
+        #song-title-input:hover { border-color: var(--border); }
+        #song-title-input:focus { border-color: var(--accent-blue); background: var(--surface-hover); }
+        .nav-spacer { flex: 1; }
+        .nav-save-indicator { color: var(--text-muted); font-size: 13px; }
+        .nav-save-indicator.saved { color: var(--accent); }
+        .nav-btn {
+            padding: 7px 16px; border-radius: 6px; border: 1px solid var(--border);
+            background: var(--surface); color: var(--text); font-size: 13px;
+            font-family: var(--font-ui); cursor: pointer;
+        }
+        .nav-btn:hover { background: var(--surface-hover); }
+        .nav-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .nav-btn.primary:hover { background: var(--accent-hover); }
+        .user-avatar {
+            width: 32px; height: 32px; border-radius: 50%;
+            background: var(--accent-blue); display: flex; align-items: center;
+            justify-content: center; font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+
+        /* LAYOUT */
+        #main-app { display: none; height: 100vh; flex-direction: column; }
+        #app-body { display: flex; flex: 1; overflow: hidden; }
+
+        /* SIDEBAR */
+        #sidebar {
+            width: var(--sidebar-w); min-width: var(--sidebar-w);
+            background: var(--surface); border-right: 1px solid var(--border);
+            display: flex; flex-direction: column;
+        }
+        .sidebar-header {
+            padding: 16px; display: flex; align-items: center;
+            justify-content: space-between; border-bottom: 1px solid var(--border);
+        }
+        .sidebar-header h3 { font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .sidebar-new-btn {
+            width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border);
+            background: transparent; color: var(--text); font-size: 20px;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+        }
+        .sidebar-new-btn:hover { background: var(--accent); border-color: var(--accent); }
+        #song-list { flex: 1; overflow-y: auto; padding: 8px; }
+        .song-item {
+            padding: 12px; border-radius: 8px; cursor: pointer;
+            margin-bottom: 4px; position: relative;
+        }
+        .song-item:hover { background: var(--surface-hover); }
+        .song-item.active { background: var(--surface-active); border-left: 3px solid var(--accent-blue); }
+        .song-item-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .song-item-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .song-item-delete {
+            position: absolute; top: 8px; right: 8px;
+            width: 24px; height: 24px; border-radius: 4px;
+            background: transparent; border: none; color: var(--text-muted);
+            cursor: pointer; display: none; align-items: center; justify-content: center; font-size: 16px;
+        }
+        .song-item:hover .song-item-delete { display: flex; }
+        .song-item-delete:hover { background: rgba(248,81,73,0.15); color: var(--danger); }
+        .sidebar-empty { padding: 32px 16px; text-align: center; color: var(--text-muted); font-size: 14px; }
+
+        /* EDITOR */
+        #editor { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+        /* Editor toolbar */
+        #editor-toolbar {
+            display: none; padding: 6px 32px; border-bottom: 1px solid var(--border);
+            background: var(--surface); gap: 8px; align-items: center;
+        }
+        .toolbar-btn {
+            padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border);
+            background: transparent; color: var(--text-muted); font-size: 12px;
+            font-family: var(--font-ui); cursor: pointer; display: flex; align-items: center; gap: 6px;
+        }
+        .toolbar-btn:hover { background: var(--surface-hover); color: var(--text); border-color: var(--text-muted); }
+        .toolbar-btn svg { width: 14px; height: 14px; }
+        .toolbar-sep { width: 1px; height: 20px; background: var(--border); }
+
+        #editor-scroll { flex: 1; overflow: auto; padding: 24px 32px 120px 32px; }
+        #editor-content { width: max-content; min-width: 100%; min-height: 100%; }
+        .editor-empty {
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: center; height: 100%; width: 100%; color: var(--text-muted);
+            gap: 16px; font-size: 16px;
+        }
+        .editor-empty-btn {
+            padding: 12px 28px; border-radius: 8px; border: 2px dashed var(--border);
+            background: transparent; color: var(--chord-color); font-size: 15px;
+            font-family: var(--font-ui); cursor: pointer;
+        }
+        .editor-empty-btn:hover { border-color: var(--chord-color); background: var(--chord-bg); }
+
+        /* Line pairs */
+        .line-pair { position: relative; margin-bottom: 2px; }
+        .chord-area {
+            height: 24px; position: relative; cursor: text;
+            min-width: 100%; padding-left: var(--editor-pad);
+            border-radius: 3px 3px 0 0;
+        }
+        .chord-area:hover { background: rgba(88,166,255,0.04); }
+        .chord-area.drag-over { background: rgba(88,166,255,0.1); outline: 1px dashed var(--chord-color); outline-offset: -1px; }
+        .chord-badge {
+            position: absolute; top: 2px;
+            color: var(--chord-color); font-family: var(--font-mono);
+            font-size: var(--editor-font-size); font-weight: 500;
+            line-height: 20px; cursor: pointer; white-space: nowrap;
+            padding: 0 2px; border-radius: 3px;
+        }
+        .chord-badge:hover { background: var(--chord-bg); }
+        .lyric-line {
+            font-family: var(--font-mono); font-size: var(--editor-font-size);
+            line-height: var(--editor-line-height);
+            color: var(--text); white-space: pre; outline: none;
+            padding: 0 var(--editor-pad); min-height: var(--editor-line-height);
+            border-radius: 0 0 3px 3px; caret-color: var(--chord-color);
+        }
+        .lyric-line:focus { background: rgba(255,255,255,0.02); }
+        .lyric-line.section-label { color: var(--section-color); font-weight: 600; font-style: italic; }
+        .chord-input-popup {
+            position: absolute; top: 0; width: 72px; height: 22px;
+            background: var(--surface); border: 1px solid var(--chord-color);
+            border-radius: 4px; color: var(--chord-color);
+            font-family: var(--font-mono); font-size: 14px; padding: 0 6px; outline: none; z-index: 10;
+        }
+
+        /* TAB BLOCKS */
+        .tab-block {
+            margin: 8px 0; border: 1px solid var(--border); border-radius: 8px;
+            background: var(--surface); overflow: hidden;
+        }
+        .tab-block-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 12px; border-bottom: 1px solid var(--border);
+            background: rgba(240,136,62,0.06);
+        }
+        .tab-block-label {
+            font-size: 12px; font-weight: 600; color: var(--tab-active);
+            display: flex; align-items: center; gap: 6px;
+        }
+        .tab-block-actions { display: flex; gap: 6px; }
+        .tab-block-btn {
+            padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border);
+            background: transparent; color: var(--text-muted); font-size: 11px;
+            font-family: var(--font-ui); cursor: pointer;
+        }
+        .tab-block-btn:hover { background: var(--surface-hover); color: var(--text); }
+        .tab-block-btn.danger:hover { background: rgba(248,81,73,0.15); color: var(--danger); border-color: var(--danger); }
+        .tab-body { padding: 12px 16px; overflow-x: auto; }
+        .tab-svg-wrap { position: relative; }
+        .tab-placeholder {
+            text-align: center; padding: 8px; font-size: 12px;
+            color: var(--text-dim); font-style: italic;
+        }
+        .tab-cell {
+            cursor: pointer; text-align: center; font-family: var(--font-mono);
+            font-size: 13px; line-height: 20px; outline: none;
+            color: var(--text-muted); width: 24px; height: 20px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .tab-cell:hover { background: rgba(240,136,62,0.1); border-radius: 3px; }
+        .tab-cell:focus { background: rgba(240,136,62,0.18); border-radius: 3px; color: var(--tab-active); outline: 1px solid var(--tab-active); }
+        .tab-cell.has-note { color: var(--text); font-weight: 600; }
+        .tab-string-label {
+            font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+            color: var(--text-muted); width: 20px; text-align: right;
+            padding-right: 6px; flex-shrink: 0;
+        }
+        .tab-row { display: flex; align-items: center; height: 20px; position: relative; }
+        .tab-row::after {
+            content: ''; position: absolute; left: 26px; right: 0;
+            top: 50%; height: 1px; background: var(--tab-line); z-index: 0; pointer-events: none;
+        }
+        .tab-cells-row { display: flex; position: relative; z-index: 1; }
+
+        /* CHORD PALETTE */
+        #chord-palette {
+            width: var(--palette-w); min-width: var(--palette-w);
+            background: var(--surface); border-left: 1px solid var(--border);
+            display: flex; flex-direction: column;
+        }
+        .palette-header {
+            padding: 16px; border-bottom: 1px solid var(--border);
+            font-size: 14px; font-weight: 600; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        #chord-palette-content { flex: 1; overflow-y: auto; padding: 12px; }
+
+        /* Quick Chords bar */
+        .quick-chords { margin-bottom: 16px; }
+        .quick-chords-section { margin-bottom: 12px; }
+        .quick-section-header {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+        }
+        .quick-section-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .detected-key {
+            padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 700;
+            background: rgba(240,136,62,0.15); color: var(--tab-active);
+            font-family: var(--font-mono);
+        }
+        .quick-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .quick-chip {
+            padding: 4px 10px; border-radius: 6px; cursor: grab;
+            font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+            user-select: none; border: 1px solid transparent;
+        }
+        .quick-chip.used {
+            background: var(--chord-bg); color: var(--chord-color); border-color: rgba(88,166,255,0.3);
+        }
+        .quick-chip.suggested {
+            background: rgba(240,136,62,0.08); color: var(--tab-active); border-color: rgba(240,136,62,0.2);
+        }
+        .quick-chip:hover { filter: brightness(1.2); }
+        .quick-divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+        .chord-group { margin-bottom: 16px; }
+        .chord-group-label {
+            font-size: 11px; font-weight: 600; color: var(--text-muted);
+            text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-left: 2px;
+        }
+        .chord-group-items { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chord-chip {
+            padding: 5px 10px; border-radius: 6px;
+            background: var(--surface-hover); border: 1px solid var(--border);
+            color: var(--chord-color); font-family: var(--font-mono);
+            font-size: 13px; font-weight: 500; cursor: grab; user-select: none;
+        }
+        .chord-chip:hover { background: var(--chord-bg); border-color: var(--chord-color); }
+        body.dragging-chord .chord-area { background: rgba(88,166,255,0.04); }
+
+        .save-toast {
+            position: fixed; bottom: 20px; right: 20px;
+            padding: 10px 20px; border-radius: 8px;
+            background: var(--accent); color: #fff; font-size: 13px; font-weight: 500;
+            opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100;
+        }
+        .save-toast.show { opacity: 1; }
+        .config-banner {
+            background: rgba(31,111,235,0.12); border-bottom: 1px solid rgba(31,111,235,0.3);
+            padding: 8px 16px; font-size: 13px; color: var(--chord-color);
+            display: flex; align-items: center; gap: 8px;
+        }
+        .config-banner code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
+        .palette-tip {
+            padding: 12px; margin: 8px 0; border-radius: 6px;
+            background: rgba(88,166,255,0.06); border: 1px solid rgba(88,166,255,0.15);
+            font-size: 12px; color: var(--text-muted); line-height: 1.5;
+        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    </style>
+</head>
+<body>
+<div id="auth-screen">
+    <div class="auth-logo">Open<span>Chord</span></div>
+    <div class="auth-subtitle">Free songwriting. Unlimited songs. No paywall.</div>
+    <button class="auth-btn" id="google-signin-btn">
+        <svg viewBox="0 0 24 24"><path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34a853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#fbbc05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Sign in with Google
+    </button>
+    <div class="auth-skip" id="skip-auth-btn">Continue without account (local storage only)</div>
+</div>
+
+<div id="main-app">
+    <div id="navbar">
+        <div class="nav-logo">Open<span>Chord</span></div>
+        <div class="nav-divider"></div>
+        <input type="text" id="song-title-input" placeholder="Untitled Song" spellcheck="false">
+        <div class="nav-spacer"></div>
+        <span class="nav-save-indicator" id="save-indicator"></span>
+        <button class="nav-btn primary" id="save-btn" title="Ctrl+S">Save</button>
+        <div class="nav-divider"></div>
+        <div class="user-avatar" id="user-avatar" title="Account">?</div>
+    </div>
+    <div class="config-banner" id="config-banner" style="display:none;">
+        &#9432; Running in local mode. Configure Firebase in <code>index.html</code> for cloud sync.
+    </div>
+    <div id="app-body">
+        <div id="sidebar">
+            <div class="sidebar-header">
+                <h3>Songs</h3>
+                <button class="sidebar-new-btn" id="new-song-btn" title="New Song">+</button>
+            </div>
+            <div id="song-list"></div>
+        </div>
+        <div id="editor">
+            <div id="editor-toolbar">
+                <button class="toolbar-btn" id="insert-tab-btn" title="Insert guitar tab block">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="3" x2="15" y2="3"/><line x1="1" y1="6" x2="15" y2="6"/><line x1="1" y1="9" x2="15" y2="9"/><line x1="1" y1="12" x2="15" y2="12"/><line x1="1" y1="15" x2="15" y2="15"/><line x1="1" y1="1" x2="15" y2="1"/></svg>
+                    Insert Tab
+                </button>
+                <div class="toolbar-sep"></div>
+                <button class="toolbar-btn" id="insert-section-btn" title="Insert section label">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="14" height="10" rx="2"/><line x1="4" y1="7" x2="12" y2="7"/></svg>
+                    Section
+                </button>
+            </div>
+            <div id="editor-scroll"><div id="editor-content"></div></div>
+        </div>
+        <div id="chord-palette">
+            <div class="palette-header">Chord Palette</div>
+            <div id="chord-palette-content"></div>
+        </div>
+    </div>
+</div>
+<div class="save-toast" id="save-toast">Saved</div>
+
+<script>
+(function() {
+    'use strict';
+
+    // ═══════════════════════════════════════════════════
+    // CONFIG — Replace with your Firebase project config
+    // ═══════════════════════════════════════════════════
+    const FIREBASE_CONFIG = {
+        apiKey: "YOUR_API_KEY",
+        authDomain: "YOUR_PROJECT.firebaseapp.com",
+        projectId: "YOUR_PROJECT_ID",
+        storageBucket: "YOUR_PROJECT.appspot.com",
+        messagingSenderId: "000000000000",
+        appId: "YOUR_APP_ID"
+    };
+    const firebaseConfigured = FIREBASE_CONFIG.apiKey !== 'YOUR_API_KEY';
+    let auth, db;
+
+    // ═══════════════════════════════════════════════════
+    // STATE
+    // ═══════════════════════════════════════════════════
+    const EDITOR_PAD = 4;
+    const TAB_COLS = 28;
+    const TAB_STRINGS = ['e', 'B', 'G', 'D', 'A', 'E'];
+    const CHORD_RE = /^[A-G][#b]?(m|maj|min|dim|aug|sus|add|M)?\d{0,2}(\/[A-G][#b]?)?$/;
+
+    let state = {
+        user: null, songs: [], currentSongId: null, currentSong: null,
+        charWidth: 9, saveTimeout: null, usedChords: [],
+    };
+
+    // Key detection data: key → diatonic chords
+    const KEY_CHORDS = {
+        'C':  ['C','Dm','Em','F','G','Am','Bdim'],
+        'G':  ['G','Am','Bm','C','D','Em','F#dim'],
+        'D':  ['D','Em','F#m','G','A','Bm','C#dim'],
+        'A':  ['A','Bm','C#m','D','E','F#m','G#dim'],
+        'E':  ['E','F#m','G#m','A','B','C#m','D#dim'],
+        'F':  ['F','Gm','Am','Bb','C','Dm','Edim'],
+        'Bb': ['Bb','Cm','Dm','Eb','F','Gm','Adim'],
+        'Eb': ['Eb','Fm','Gm','Ab','Bb','Cm','Ddim'],
+        'Ab': ['Ab','Bbm','Cm','Db','Eb','Fm','Gdim'],
+    };
+
+    // ═══════════════════════════════════════════════════
+    // INIT
+    // ═══════════════════════════════════════════════════
+    function init() {
+        if (firebaseConfigured) {
+            firebase.initializeApp(FIREBASE_CONFIG);
+            auth = firebase.auth(); db = firebase.firestore();
+            auth.onAuthStateChanged(onAuthStateChanged);
+            document.getElementById('auth-screen').style.display = 'flex';
+        } else {
+            document.getElementById('config-banner').style.display = 'flex';
+            enterApp(null);
+        }
+        document.fonts.ready.then(() => {
+            state.charWidth = measureCharWidth();
+            if (state.currentSong) renderEditor();
+        });
+        document.getElementById('google-signin-btn').addEventListener('click', signIn);
+        document.getElementById('skip-auth-btn').addEventListener('click', () => enterApp(null));
+        document.getElementById('new-song-btn').addEventListener('click', createNewSong);
+        document.getElementById('save-btn').addEventListener('click', () => saveSong());
+        document.getElementById('song-title-input').addEventListener('input', onTitleChange);
+        document.getElementById('user-avatar').addEventListener('click', toggleUserMenu);
+        document.getElementById('insert-tab-btn').addEventListener('click', insertTabBlock);
+        document.getElementById('insert-section-btn').addEventListener('click', insertSection);
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveSong(); }
+        });
+    }
+
+    function measureCharWidth() {
+        const s = document.createElement('span');
+        s.style.cssText = "font-family:'Fira Code',Consolas,Monaco,monospace;font-size:15px;position:absolute;visibility:hidden;white-space:pre";
+        s.textContent = 'MMMMMMMMMM';
+        document.body.appendChild(s);
+        const w = s.getBoundingClientRect().width / 10;
+        document.body.removeChild(s);
+        return w;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // AUTH
+    // ═══════════════════════════════════════════════════
+    function signIn() {
+        if (!firebaseConfigured) return;
+        auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(e => console.error('Auth:', e));
+    }
+    function signOut() {
+        if (firebaseConfigured && auth) auth.signOut();
+        state.user = null; state.songs = []; state.currentSongId = null; state.currentSong = null;
+        document.getElementById('main-app').style.display = 'none';
+        document.getElementById('auth-screen').style.display = 'flex';
+    }
+    function onAuthStateChanged(user) {
+        if (user) enterApp(user);
+        else { document.getElementById('auth-screen').style.display = 'flex'; document.getElementById('main-app').style.display = 'none'; }
+    }
+    function enterApp(user) {
+        state.user = user;
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('main-app').style.display = 'flex';
+        const av = document.getElementById('user-avatar');
+        if (user && user.photoURL) av.innerHTML = '<img src="'+user.photoURL+'" style="width:32px;height:32px;border-radius:50%">';
+        else if (user) av.textContent = (user.displayName||user.email||'?')[0].toUpperCase();
+        else { av.textContent = 'L'; av.title = 'Local mode'; }
+        loadSongs(); renderChordPalette();
+    }
+    function toggleUserMenu() { if (firebaseConfigured && state.user && confirm('Sign out?')) signOut(); }
+
+    // ═══════════════════════════════════════════════════
+    // STORAGE
+    // ═══════════════════════════════════════════════════
+    async function loadSongs() {
+        if (state.user && firebaseConfigured && db) {
+            try {
+                const snap = await db.collection('users').doc(state.user.uid).collection('songs').orderBy('updatedAt','desc').get();
+                state.songs = snap.docs.map(d => ({ id: d.id, title: d.data().title||'Untitled', updatedAt: d.data().updatedAt, preview: getPreview(d.data()) }));
+            } catch(e) { console.error('Load:',e); }
+        } else {
+            const raw = localStorage.getItem('openchord_songs');
+            const songs = raw ? JSON.parse(raw) : {};
+            state.songs = Object.entries(songs).map(([id,d]) => ({ id, title: d.title||'Untitled', updatedAt: d.updatedAt||0, preview: getPreview(d) }));
+            state.songs.sort((a,b) => (b.updatedAt||0)-(a.updatedAt||0));
+        }
+        renderSidebar();
+        if (state.songs.length > 0 && !state.currentSongId) selectSong(state.songs[0].id);
+        else if (!state.songs.length) renderEditorEmpty();
+    }
+
+    function getPreview(d) {
+        if (!d || !d.lines) return '';
+        for (const l of d.lines) {
+            if (l.type === 'tab') continue;
+            const t = (l.lyrics||'').trim();
+            if (t && !/^\[.+\]$/.test(t)) return t.substring(0,60);
+        }
+        return '';
+    }
+
+    async function saveSong() {
+        if (!state.currentSong || !state.currentSongId) return;
+        clearTimeout(state.saveTimeout);
+        state.currentSong.updatedAt = Date.now();
+        state.currentSong.title = document.getElementById('song-title-input').value || 'Untitled';
+        try {
+            if (state.user && firebaseConfigured && db) {
+                await db.collection('users').doc(state.user.uid).collection('songs').doc(state.currentSongId).set(state.currentSong);
+            } else {
+                const raw = localStorage.getItem('openchord_songs');
+                const songs = raw ? JSON.parse(raw) : {};
+                songs[state.currentSongId] = state.currentSong;
+                localStorage.setItem('openchord_songs', JSON.stringify(songs));
+            }
+            showSaveToast();
+        } catch(e) { console.error('Save:',e); }
+        const idx = state.songs.findIndex(s => s.id === state.currentSongId);
+        const entry = { id: state.currentSongId, title: state.currentSong.title, updatedAt: state.currentSong.updatedAt, preview: getPreview(state.currentSong) };
+        if (idx >= 0) state.songs[idx] = entry; else state.songs.unshift(entry);
+        renderSidebar(); updateQuickChords();
+    }
+
+    function scheduleSave() {
+        clearTimeout(state.saveTimeout);
+        document.getElementById('save-indicator').textContent = 'Unsaved changes';
+        document.getElementById('save-indicator').classList.remove('saved');
+        state.saveTimeout = setTimeout(saveSong, 2000);
+    }
+    function showSaveToast() {
+        document.getElementById('save-indicator').textContent = 'Saved';
+        document.getElementById('save-indicator').classList.add('saved');
+        const t = document.getElementById('save-toast');
+        t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1500);
+    }
+
+    async function selectSong(id) {
+        state.currentSongId = id;
+        if (state.user && firebaseConfigured && db) {
+            try { const d = await db.collection('users').doc(state.user.uid).collection('songs').doc(id).get(); state.currentSong = d.exists ? d.data() : null; }
+            catch(e) { console.error('Load song:',e); state.currentSong = null; }
+        } else {
+            const raw = localStorage.getItem('openchord_songs');
+            state.currentSong = (raw ? JSON.parse(raw) : {})[id] || null;
+        }
+        if (state.currentSong) {
+            // Backward compat: ensure every line has a type
+            state.currentSong.lines = (state.currentSong.lines||[]).map(l => {
+                if (!l.type) l.type = 'lyrics';
+                return l;
+            });
+            document.getElementById('song-title-input').value = state.currentSong.title || '';
+            renderEditor(); updateQuickChords();
+        }
+        renderSidebar();
+    }
+
+    function createNewSong() {
+        const id = 'song_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
+        state.currentSong = { title: 'Untitled Song', lines: [{ type:'lyrics', lyrics:'', chords:[] }], updatedAt: Date.now() };
+        state.currentSongId = id;
+        state.songs.unshift({ id, title:'Untitled Song', updatedAt: Date.now(), preview:'' });
+        document.getElementById('song-title-input').value = 'Untitled Song';
+        renderEditor(); renderSidebar(); saveSong();
+        setTimeout(() => focusLine(0, 0), 50);
+    }
+
+    async function deleteSong(id) {
+        if (!confirm('Delete this song?')) return;
+        if (state.user && firebaseConfigured && db) { try { await db.collection('users').doc(state.user.uid).collection('songs').doc(id).delete(); } catch(e){} }
+        else { const raw = localStorage.getItem('openchord_songs'); const s = raw ? JSON.parse(raw) : {}; delete s[id]; localStorage.setItem('openchord_songs', JSON.stringify(s)); }
+        state.songs = state.songs.filter(s => s.id !== id);
+        if (state.currentSongId === id) { state.currentSongId = null; state.currentSong = null; if (state.songs.length) selectSong(state.songs[0].id); else renderEditorEmpty(); }
+        renderSidebar();
+    }
+    function onTitleChange() { if (state.currentSong) { state.currentSong.title = document.getElementById('song-title-input').value; scheduleSave(); } }
+
+    // ═══════════════════════════════════════════════════
+    // SIDEBAR
+    // ═══════════════════════════════════════════════════
+    function renderSidebar() {
+        const list = document.getElementById('song-list');
+        if (!state.songs.length) { list.innerHTML = '<div class="sidebar-empty">No songs yet.<br>Click + to create one.</div>'; return; }
+        list.innerHTML = state.songs.map(s => `
+            <div class="song-item ${s.id===state.currentSongId?'active':''}" data-id="${s.id}">
+                <div class="song-item-title">${esc(s.title||'Untitled')}</div>
+                <div class="song-item-meta">${s.preview?esc(s.preview):'Empty song'}</div>
+                <button class="song-item-delete" data-del="${s.id}" title="Delete">&times;</button>
+            </div>`).join('');
+        list.querySelectorAll('.song-item').forEach(el => el.addEventListener('click', e => { if (!e.target.closest('.song-item-delete')) selectSong(el.dataset.id); }));
+        list.querySelectorAll('.song-item-delete').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); deleteSong(b.dataset.del); }));
+    }
+
+    // ═══════════════════════════════════════════════════
+    // EDITOR
+    // ═══════════════════════════════════════════════════
+    function renderEditorEmpty() {
+        document.getElementById('editor-toolbar').style.display = 'none';
+        const c = document.getElementById('editor-content');
+        c.innerHTML = '<div class="editor-empty"><div style="font-size:48px;opacity:0.3">&#9835;</div><div>Select a song or create a new one</div><button class="editor-empty-btn" id="ec-btn">+ Create Your First Song</button></div>';
+        document.getElementById('ec-btn').addEventListener('click', createNewSong);
+        document.getElementById('song-title-input').value = '';
+    }
+
+    function renderEditor() {
+        document.getElementById('editor-toolbar').style.display = 'flex';
+        const c = document.getElementById('editor-content');
+        c.innerHTML = '';
+        if (!state.currentSong) { renderEditorEmpty(); return; }
+        state.currentSong.lines.forEach((line, i) => {
+            if (line.type === 'tab') c.appendChild(buildTabBlock(line, i));
+            else c.appendChild(buildLinePair(line, i));
+        });
+    }
+
+    // ─── Lyric line pairs ───
+    function buildLinePair(line, index) {
+        const pair = document.createElement('div');
+        pair.className = 'line-pair'; pair.dataset.index = index;
+        const ca = document.createElement('div'); ca.className = 'chord-area';
+        renderChordBadges(ca, line.chords || []);
+        setupChordAreaEvents(ca, index);
+        const ly = document.createElement('div');
+        ly.className = 'lyric-line'; ly.contentEditable = 'true'; ly.spellcheck = false;
+        ly.textContent = line.lyrics || '';
+        if (/^\[.+\]$/.test((line.lyrics||'').trim())) ly.classList.add('section-label');
+        setupLyricEvents(ly, index);
+        pair.appendChild(ca); pair.appendChild(ly);
+        return pair;
+    }
+
+    function renderChordBadges(ca, chords) {
+        ca.querySelectorAll('.chord-badge').forEach(b => b.remove());
+        chords.forEach(chord => {
+            const b = document.createElement('span');
+            b.className = 'chord-badge'; b.textContent = chord.name;
+            b.style.left = (EDITOR_PAD + chord.pos * state.charWidth) + 'px';
+            let clickTimer = null;
+            b.addEventListener('click', e => {
+                e.stopPropagation(); clearTimeout(clickTimer);
+                clickTimer = setTimeout(() => {
+                    const li = parseInt(ca.parentElement.dataset.index);
+                    editChordBadge(ca, chord, li);
+                }, 280);
+            });
+            b.addEventListener('dblclick', e => {
+                e.stopPropagation(); clearTimeout(clickTimer);
+                removeChord(parseInt(ca.parentElement.dataset.index), chord);
+            });
+            ca.appendChild(b);
+        });
+    }
+
+    // ─── Chord area events ───
+    function setupChordAreaEvents(ca, li) {
+        ca.addEventListener('click', e => {
+            if (e.target.classList.contains('chord-badge')) return;
+            const x = e.clientX - ca.getBoundingClientRect().left - EDITOR_PAD;
+            showChordInput(ca, li, Math.max(0, Math.round(x / state.charWidth)));
+        });
+        ca.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; ca.classList.add('drag-over'); });
+        ca.addEventListener('dragleave', () => ca.classList.remove('drag-over'));
+        ca.addEventListener('drop', e => {
+            e.preventDefault(); ca.classList.remove('drag-over');
+            const name = e.dataTransfer.getData('text/plain'); if (!name) return;
+            const x = e.clientX - ca.getBoundingClientRect().left - EDITOR_PAD;
+            addChord(li, name, Math.max(0, Math.round(x / state.charWidth)));
+        });
+    }
+
+    function showChordInput(ca, li, charPos) {
+        const old = ca.querySelector('.chord-input-popup'); if (old) old.remove();
+        const inp = document.createElement('input'); inp.className = 'chord-input-popup';
+        inp.type = 'text'; inp.placeholder = 'Am7';
+        inp.style.left = (EDITOR_PAD + charPos * state.charWidth) + 'px';
+        let committed = false;
+        function commit() { if (committed) return; committed = true; const n = inp.value.trim(); if (n) addChord(li, n, charPos); if (inp.parentElement) inp.remove(); }
+        inp.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { committed = true; inp.remove(); }
+            if (e.key === 'Tab') {
+                e.preventDefault(); const n = inp.value.trim();
+                if (n) { addChord(li, n, charPos); charPos += n.length + 1; inp.value = ''; inp.style.left = (EDITOR_PAD + charPos * state.charWidth)+'px'; committed = false; }
+            }
+        });
+        inp.addEventListener('blur', () => setTimeout(commit, 100));
+        ca.appendChild(inp); inp.focus();
+    }
+
+    function editChordBadge(ca, chord, li) {
+        showChordInput(ca, li, chord.pos);
+        setTimeout(() => { const i = ca.querySelector('.chord-input-popup'); if (i) { i.value = chord.name; i.select(); } }, 10);
+    }
+
+    // ─── Chord CRUD ───
+    function addChord(li, name, pos) {
+        const line = state.currentSong.lines[li]; if (!line || line.type === 'tab') return;
+        if (!line.chords) line.chords = [];
+        line.chords = line.chords.filter(c => { const cE = c.pos+c.name.length, nE = pos+name.length; return !(c.pos < nE && pos < cE); });
+        line.chords.push({ name, pos }); line.chords.sort((a,b) => a.pos-b.pos);
+        const pair = document.querySelectorAll('#editor-content > *')[li];
+        if (pair && pair.classList.contains('line-pair')) { renderChordBadges(pair.querySelector('.chord-area'), line.chords); }
+        scheduleSave(); updateQuickChords();
+    }
+    function removeChord(li, chord) {
+        const line = state.currentSong.lines[li]; if (!line) return;
+        line.chords = (line.chords||[]).filter(c => !(c.name === chord.name && c.pos === chord.pos));
+        const pair = document.querySelectorAll('#editor-content > *')[li];
+        if (pair && pair.classList.contains('line-pair')) renderChordBadges(pair.querySelector('.chord-area'), line.chords);
+        scheduleSave(); updateQuickChords();
+    }
+
+    // ─── Lyric events ───
+    function setupLyricEvents(ly, li) {
+        ly.addEventListener('input', () => {
+            const t = ly.textContent; state.currentSong.lines[li].lyrics = t;
+            if (/^\[.+\]$/.test(t.trim())) ly.classList.add('section-label'); else ly.classList.remove('section-label');
+            scheduleSave();
+        });
+        ly.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const off = getCaretOffset(ly), txt = ly.textContent;
+                state.currentSong.lines[li].lyrics = txt.substring(0, off); ly.textContent = txt.substring(0, off);
+                const old = state.currentSong.lines[li].chords || [];
+                state.currentSong.lines[li].chords = old.filter(c => c.pos < off);
+                const moved = old.filter(c => c.pos >= off).map(c => ({...c, pos: c.pos - off}));
+                state.currentSong.lines.splice(li+1, 0, { type:'lyrics', lyrics: txt.substring(off), chords: moved });
+                renderEditor(); focusLine(li+1, 0); scheduleSave();
+            }
+            if (e.key === 'Backspace' && getCaretOffset(ly) === 0 && li > 0) {
+                // Only merge if prev is also lyrics
+                const prev = state.currentSong.lines[li-1];
+                if (prev.type !== 'lyrics') return;
+                e.preventDefault();
+                const cp = prev.lyrics.length; const cur = state.currentSong.lines[li];
+                prev.lyrics += cur.lyrics;
+                (cur.chords||[]).forEach(c => { prev.chords = prev.chords||[]; prev.chords.push({...c, pos: c.pos+cp}); });
+                state.currentSong.lines.splice(li, 1);
+                renderEditor(); focusLine(li-1, cp); scheduleSave();
+            }
+            if (e.key === 'ArrowUp' && li > 0) { e.preventDefault(); focusLyricNear(li, -1, getCaretOffset(ly)); }
+            if (e.key === 'ArrowDown' && li < state.currentSong.lines.length-1) { e.preventDefault(); focusLyricNear(li, 1, getCaretOffset(ly)); }
+        });
+        ly.addEventListener('paste', e => {
+            e.preventDefault();
+            const text = (e.clipboardData||window.clipboardData).getData('text/plain');
+            const lines = text.split(/\r?\n/);
+            if (lines.length <= 1) { document.execCommand('insertText', false, text); state.currentSong.lines[li].lyrics = ly.textContent; scheduleSave(); return; }
+            const off = getCaretOffset(ly), cur = ly.textContent, before = cur.substring(0,off), after = cur.substring(off);
+            const parsed = parseChordSheet(lines);
+            parsed[0].lyrics = before + parsed[0].lyrics;
+            parsed[0].chords = parsed[0].chords.map(c => ({...c, pos: c.pos+before.length}));
+            const eb = (state.currentSong.lines[li].chords||[]).filter(c => c.pos < off);
+            parsed[0].chords = [...eb, ...parsed[0].chords].sort((a,b) => a.pos-b.pos);
+            parsed[parsed.length-1].lyrics += after;
+            state.currentSong.lines.splice(li, 1, ...parsed);
+            renderEditor(); focusLine(li+parsed.length-1, parsed[parsed.length-1].lyrics.length-after.length); scheduleSave();
+        });
+    }
+
+    // ═══════════════════════════════════════════════════
+    // TAB BLOCKS
+    // ═══════════════════════════════════════════════════
+    function makeEmptyTabData() {
+        return TAB_STRINGS.map(() => new Array(TAB_COLS).fill(''));
+    }
+
+    function insertTabBlock() {
+        if (!state.currentSong) return;
+        // Find insertion point: after the last focused lyric line, or at end
+        const focused = document.activeElement;
+        let insertAt = state.currentSong.lines.length;
+        if (focused && focused.classList && focused.classList.contains('lyric-line')) {
+            const pair = focused.closest('.line-pair');
+            if (pair) insertAt = parseInt(pair.dataset.index) + 1;
+        }
+        const tabLine = { type: 'tab', tuning: [...TAB_STRINGS], data: makeEmptyTabData() };
+        state.currentSong.lines.splice(insertAt, 0, tabLine);
+        renderEditor(); scheduleSave();
+        // Scroll to tab
+        const blocks = document.querySelectorAll('#editor-content > *');
+        if (blocks[insertAt]) blocks[insertAt].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function insertSection() {
+        if (!state.currentSong) return;
+        const label = prompt('Section name:', 'Chorus');
+        if (!label) return;
+        const focused = document.activeElement;
+        let insertAt = state.currentSong.lines.length;
+        if (focused && focused.classList && focused.classList.contains('lyric-line')) {
+            const pair = focused.closest('.line-pair');
+            if (pair) insertAt = parseInt(pair.dataset.index) + 1;
+        }
+        state.currentSong.lines.splice(insertAt, 0, { type:'lyrics', lyrics: '['+label+']', chords:[] });
+        renderEditor(); scheduleSave();
+    }
+
+    function buildTabBlock(line, index) {
+        const block = document.createElement('div');
+        block.className = 'tab-block'; block.dataset.index = index;
+        // Header
+        const header = document.createElement('div'); header.className = 'tab-block-header';
+        header.innerHTML = '<div class="tab-block-label"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="1" y1="3" x2="15" y2="3"/><line x1="1" y1="6" x2="15" y2="6"/><line x1="1" y1="9" x2="15" y2="9"/><line x1="1" y1="12" x2="15" y2="12"/></svg> Guitar Tab</div>';
+        const actions = document.createElement('div'); actions.className = 'tab-block-actions';
+        const addBtn = document.createElement('button'); addBtn.className = 'tab-block-btn'; addBtn.textContent = '+ Measures';
+        addBtn.addEventListener('click', () => {
+            line.data.forEach(row => { for (let i = 0; i < 8; i++) row.push(''); });
+            renderEditor(); scheduleSave();
+        });
+        const delBtn = document.createElement('button'); delBtn.className = 'tab-block-btn danger'; delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', () => {
+            state.currentSong.lines.splice(index, 1); renderEditor(); scheduleSave();
+        });
+        actions.appendChild(addBtn); actions.appendChild(delBtn);
+        header.appendChild(actions);
+        block.appendChild(header);
+
+        // Body
+        const body = document.createElement('div'); body.className = 'tab-body';
+        const placeholder = document.createElement('div'); placeholder.className = 'tab-placeholder';
+        placeholder.textContent = 'Click a string position and type a fret number. Arrow keys to move.';
+        body.appendChild(placeholder);
+
+        const grid = document.createElement('div'); grid.className = 'tab-grid';
+        const numCols = line.data[0] ? line.data[0].length : TAB_COLS;
+
+        line.tuning.forEach((str, row) => {
+            const rowEl = document.createElement('div'); rowEl.className = 'tab-row';
+            const label = document.createElement('span'); label.className = 'tab-string-label'; label.textContent = str;
+            rowEl.appendChild(label);
+            const cellsRow = document.createElement('div'); cellsRow.className = 'tab-cells-row';
+            for (let col = 0; col < numCols; col++) {
+                const cell = document.createElement('div'); cell.className = 'tab-cell';
+                cell.tabIndex = -1;
+                cell.dataset.row = row; cell.dataset.col = col; cell.dataset.lineIdx = index;
+                const val = line.data[row][col] || '';
+                cell.textContent = val || '-';
+                if (val) cell.classList.add('has-note');
+                setupTabCellEvents(cell, line, row, col);
+                cellsRow.appendChild(cell);
+            }
+            rowEl.appendChild(cellsRow);
+            grid.appendChild(rowEl);
+        });
+        body.appendChild(grid);
+        block.appendChild(body);
+        return block;
+    }
+
+    function setupTabCellEvents(cell, line, row, col) {
+        cell.addEventListener('focus', () => {
+            cell.textContent = line.data[row][col] || '';
+        });
+        cell.addEventListener('blur', () => {
+            const v = line.data[row][col] || '';
+            cell.textContent = v || '-';
+            if (v) cell.classList.add('has-note'); else cell.classList.remove('has-note');
+        });
+        cell.addEventListener('keydown', e => {
+            const numCols = line.data[0].length;
+            // Arrow navigation
+            if (e.key === 'ArrowRight') { e.preventDefault(); focusTabCell(cell, row, col+1, numCols, line.tuning.length); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); focusTabCell(cell, row, col-1, numCols, line.tuning.length); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); focusTabCell(cell, row+1, col, numCols, line.tuning.length); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); focusTabCell(cell, row-1, col, numCols, line.tuning.length); }
+            else if (e.key === 'Backspace' || e.key === 'Delete') {
+                e.preventDefault();
+                line.data[row][col] = '';
+                cell.textContent = '';
+                cell.classList.remove('has-note');
+                scheduleSave();
+            }
+            else if (e.key === 'Tab') {
+                e.preventDefault();
+                focusTabCell(cell, row, e.shiftKey ? col-1 : col+1, numCols, line.tuning.length);
+            }
+            else if (/^[0-9hpbx\/\\|]$/.test(e.key)) {
+                e.preventDefault();
+                const current = line.data[row][col] || '';
+                // Allow two-digit fret numbers (e.g., 12)
+                if (/^\d$/.test(e.key) && /^\d$/.test(current) && parseInt(current + e.key) <= 24) {
+                    line.data[row][col] = current + e.key;
+                } else {
+                    line.data[row][col] = e.key;
+                }
+                cell.textContent = line.data[row][col];
+                cell.classList.add('has-note');
+                scheduleSave();
+                // Auto-advance to next column
+                if (!/^\d$/.test(e.key) || line.data[row][col].length >= 2) {
+                    focusTabCell(cell, row, col+1, numCols, line.tuning.length);
+                }
+            }
+        });
+    }
+
+    function focusTabCell(fromCell, row, col, numCols, numRows) {
+        if (row < 0 || row >= numRows || col < 0 || col >= numCols) return;
+        const lineIdx = fromCell.dataset.lineIdx;
+        const block = fromCell.closest('.tab-block');
+        if (!block) return;
+        const target = block.querySelector(`.tab-cell[data-row="${row}"][data-col="${col}"]`);
+        if (target) target.focus();
+    }
+
+    // ═══════════════════════════════════════════════════
+    // CHORD SHEET PARSER
+    // ═══════════════════════════════════════════════════
+    function parseChordSheet(lines) {
+        const result = []; let i = 0;
+        while (i < lines.length) {
+            const tr = lines[i].trim();
+            if (isChordLine(tr) && i+1 < lines.length && !isChordLine(lines[i+1].trim())) {
+                result.push({ type:'lyrics', lyrics: lines[i+1], chords: parseChordsFromText(lines[i]) }); i += 2;
+            } else { result.push({ type:'lyrics', lyrics: lines[i], chords:[] }); i++; }
+        }
+        return result;
+    }
+    function isChordLine(t) { if (!t) return false; return t.trim().split(/\s+/).every(x => CHORD_RE.test(x)); }
+    function parseChordsFromText(t) {
+        const r = [], re = /[A-G][#b]?(?:m|maj|min|dim|aug|sus|add|M)?\d{0,2}(?:\/[A-G][#b]?)?/g;
+        let m; while ((m = re.exec(t)) !== null) r.push({ name: m[0], pos: m.index });
+        return r;
+    }
+
+    // ═══════════════════════════════════════════════════
+    // CURSOR HELPERS
+    // ═══════════════════════════════════════════════════
+    function getCaretOffset(el) {
+        const sel = window.getSelection(); if (!sel.rangeCount) return 0;
+        const r = sel.getRangeAt(0).cloneRange(); r.selectNodeContents(el);
+        r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+        return r.toString().length;
+    }
+    function focusLine(li, cp) {
+        // Focus the li-th LYRICS line (skip tab blocks)
+        const els = document.querySelectorAll('#editor-content > *');
+        if (li < 0 || li >= els.length) return;
+        const el = els[li];
+        if (!el || !el.classList.contains('line-pair')) return;
+        const ly = el.querySelector('.lyric-line');
+        if (!ly) return;
+        ly.focus();
+        let tn = null;
+        for (let i = 0; i < ly.childNodes.length; i++) { if (ly.childNodes[i].nodeType === Node.TEXT_NODE) { tn = ly.childNodes[i]; break; } }
+        if (!tn && (cp||0) > 0) { tn = document.createTextNode(ly.textContent||''); ly.innerHTML = ''; ly.appendChild(tn); }
+        if (tn) { try { const s = window.getSelection(), r = document.createRange(); r.setStart(tn, Math.min(cp||0, tn.length)); r.collapse(true); s.removeAllRanges(); s.addRange(r); } catch(e){} }
+    }
+    function focusLyricNear(fromLi, dir, cp) {
+        // Find next lyrics line in direction
+        let target = fromLi + dir;
+        while (target >= 0 && target < state.currentSong.lines.length) {
+            if (state.currentSong.lines[target].type !== 'tab') { focusLine(target, cp); return; }
+            target += dir;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════
+    // KEY DETECTION & QUICK CHORDS
+    // ═══════════════════════════════════════════════════
+    function collectUsedChords() {
+        if (!state.currentSong) return [];
+        const set = new Set();
+        state.currentSong.lines.forEach(l => {
+            if (l.type === 'tab') return;
+            (l.chords||[]).forEach(c => set.add(c.name));
+        });
+        return [...set];
+    }
+
+    function normalizeChord(c) {
+        const m = c.match(/^([A-G][#b]?)(m|min)?/);
+        return m ? m[1] + (m[2] ? 'm' : '') : c;
+    }
+
+    function detectKey(used) {
+        if (!used.length) return null;
+        const norm = used.map(normalizeChord);
+        let bestKey = null, bestScore = -1;
+        for (const [key, diatonic] of Object.entries(KEY_CHORDS)) {
+            const simple = diatonic.map(c => c.replace('dim',''));
+            let score = 0;
+            norm.forEach(c => { if (diatonic.includes(c) || simple.includes(c)) score++; });
+            // Bonus if tonic chord is used
+            if (norm.includes(key) || norm.includes(key+'m')) score += 0.5;
+            if (score > bestScore) { bestScore = score; bestKey = key; }
+        }
+        return bestScore > 0 ? bestKey : null;
+    }
+
+    function getSuggested(key, used) {
+        if (!key || !KEY_CHORDS[key]) return [];
+        return KEY_CHORDS[key].filter(c => !used.includes(c) && !used.includes(c.replace('dim','')));
+    }
+
+    function updateQuickChords() {
+        const used = collectUsedChords();
+        state.usedChords = used;
+        renderQuickChords(used);
+    }
+
+    function renderQuickChords(used) {
+        const container = document.getElementById('quick-chords');
+        if (!container) return;
+        if (!used || !used.length) { container.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:4px;">Place some chords to see suggestions here.</div>'; return; }
+
+        const key = detectKey(used);
+        const suggested = key ? getSuggested(key, used) : [];
+
+        let html = '';
+        // Detected key
+        if (key) {
+            html += '<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Detected Key</span><span class="detected-key">' + esc(key) + ' Major</span></div></div>';
+        }
+        // Used chords (drag to reuse)
+        html += '<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Your Chords</span></div><div class="quick-chips">';
+        used.forEach(c => { html += '<div class="quick-chip used" draggable="true" data-chord="'+esc(c)+'">'+esc(c)+'</div>'; });
+        html += '</div></div>';
+        // Suggested
+        if (suggested.length) {
+            html += '<div class="quick-chords-section"><div class="quick-section-header"><span class="quick-section-label">Try Next</span></div><div class="quick-chips">';
+            suggested.forEach(c => { html += '<div class="quick-chip suggested" draggable="true" data-chord="'+esc(c)+'">'+esc(c)+'</div>'; });
+            html += '</div></div>';
+        }
+        container.innerHTML = html;
+        // Wire up drag
+        container.querySelectorAll('[draggable]').forEach(chip => {
+            chip.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', chip.dataset.chord); e.dataTransfer.effectAllowed = 'copy'; document.body.classList.add('dragging-chord'); });
+            chip.addEventListener('dragend', () => { document.body.classList.remove('dragging-chord'); document.querySelectorAll('.chord-area.drag-over').forEach(el => el.classList.remove('drag-over')); });
+        });
+    }
+
+    // ═══════════════════════════════════════════════════
+    // CHORD PALETTE
+    // ═══════════════════════════════════════════════════
+    function renderChordPalette() {
+        const c = document.getElementById('chord-palette-content');
+        const roots = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+        const groups = [
+            {l:'Major',s:''},{l:'Minor',s:'m'},{l:'7th',s:'7'},{l:'Maj7',s:'maj7'},
+            {l:'Min7',s:'m7'},{l:'Sus2',s:'sus2'},{l:'Sus4',s:'sus4'},{l:'Dim',s:'dim'},{l:'Aug',s:'aug'},
+        ];
+        let html = '<div id="quick-chords" class="quick-chords"></div><div class="quick-divider"></div>';
+        html += '<div class="palette-tip"><strong>Tip:</strong> Drag chords onto lyrics, or click above a lyric line to type. Single-click a chord to edit, double-click to delete.</div>';
+        groups.forEach(g => {
+            html += '<div class="chord-group"><div class="chord-group-label">'+g.l+'</div><div class="chord-group-items">';
+            roots.forEach(r => { const n = r+g.s; html += '<div class="chord-chip" draggable="true" data-chord="'+n+'">'+n+'</div>'; });
+            html += '</div></div>';
+        });
+        c.innerHTML = html;
+        c.querySelectorAll('.chord-chip').forEach(chip => {
+            chip.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', chip.dataset.chord); e.dataTransfer.effectAllowed = 'copy'; document.body.classList.add('dragging-chord'); });
+            chip.addEventListener('dragend', () => { document.body.classList.remove('dragging-chord'); document.querySelectorAll('.chord-area.drag-over').forEach(el => el.classList.remove('drag-over')); });
+        });
+        updateQuickChords();
+    }
+
+    // ═══════════════════════════════════════════════════
+    // UTIL
+    // ═══════════════════════════════════════════════════
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
