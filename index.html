@@ -236,7 +236,7 @@ const firebaseConfig = {
   measurementId: "G-VHD2ZM4MDL"
 };
 
-const firebaseConfigured = FIREBASE_CONFIG.apiKey !== 'AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE';
+const firebaseConfigured = firebaseConfig.apiKey !== 'AIzaSyBD1-qFHagr9u8Ei8jWNkJYT_A9l_OChYE';
 let auth, db;
 const EDITOR_PAD = 4, TAB_COLS = 28, TAB_STRINGS = ['e','B','G','D','A','E'];
 const CHORD_RE = /^[A-G][#b]?(m|maj|min|dim|aug|sus|add|M)?\d{0,2}(\/[A-G][#b]?)?$/;
@@ -345,7 +345,7 @@ function tabRedo(line) { const h=getTabHist(line); if(h.ptr>=h.stack.length-1) r
 
 // ═══ INIT ═══
 function init() {
-    if (firebaseConfigured) { firebase.initializeApp(FIREBASE_CONFIG); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
+    if (firebaseConfigured) { firebase.initializeApp(firebaseConfig); auth=firebase.auth(); db=firebase.firestore(); auth.onAuthStateChanged(onAuthStateChanged); document.getElementById('auth-screen').style.display='flex'; }
     else { document.getElementById('config-banner').style.display='flex'; enterApp(null); }
     document.fonts.ready.then(()=>{ state.charWidth=measureCharWidth(); if(state.currentSong) renderEditor(); });
     document.getElementById('google-signin-btn').addEventListener('click',signIn);
