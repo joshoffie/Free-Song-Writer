@@ -128,6 +128,7 @@
         .tab-sym-sep { width:1px; height:18px; background:var(--border); margin:0 4px; flex-shrink:0; }
         .tab-body { padding:12px 16px; overflow-x:auto; position:relative; }
         .tab-placeholder { text-align:center; padding:8px; font-size:12px; color:var(--text-dim); font-style:italic; }
+        .tab-grid { width:fit-content; position:relative; }
         .tab-row { display:flex; align-items:center; height:20px; position:relative; }
         .tab-row::after { content:''; position:absolute; left:26px; right:0; top:50%; height:1px; background:var(--tab-line); z-index:0; pointer-events:none; }
         .tab-cells-row { display:flex; position:relative; z-index:1; }
@@ -136,9 +137,17 @@
         .tab-cell:hover { background:rgba(240,136,62,0.1); border-radius:3px; }
         .tab-cell:focus { background:rgba(240,136,62,0.18); border-radius:3px; color:var(--tab-active); outline:1px solid var(--tab-active); }
         .tab-cell.has-note { color:var(--text); font-weight:600; }
+        .tab-cell.sym-drop-hover { background:rgba(240,136,62,0.25); border-radius:3px; outline:1px dashed var(--tab-active); }
+        .tab-cell.slur-start { outline:2px solid var(--tab-active); border-radius:3px; }
+        .tab-block.slur-active .tab-cell { cursor:crosshair; }
+        .tab-sym-btn[draggable=true] { cursor:grab; }
+        .tab-sym-btn[draggable=true]:active { cursor:grabbing; }
+        .tab-sym-btn .sym-hint { display:none; font-size:9px; color:var(--text-dim); margin-left:4px; }
+        .tab-sym-btn:hover .sym-hint { display:inline; }
         /* Slur arcs */
         .tab-slurs-svg { position:absolute; top:0; left:26px; pointer-events:none; overflow:visible; }
         .tab-slurs-svg path { fill:none; stroke:var(--tab-active); stroke-width:1.5; }
+        .tab-slurs-svg path.slur-preview { stroke-dasharray:4 3; opacity:0.6; }
         /* Drop indicator */
         .drop-indicator { height:3px; background:var(--accent-blue); border-radius:2px; margin:2px 0; opacity:0.9; }
 
@@ -272,6 +281,8 @@ function init() {
 }
 
 function globalKeydown(e) {
+    // Escape exits slur mode
+    if (e.key==='Escape' && state.slurMode) { exitSlurMode(); return; }
     if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveSong(); }
     // Multi-line selection: Delete / Backspace / Escape (global so it works regardless of focus)
     if (hasMultiSel()) {
@@ -466,17 +477,30 @@ function buildTabBlock(line, index) {
     // Symbols toolbar
     const symBar=document.createElement('div'); symBar.className='tab-symbols-bar';
     const symbols=[
-        {label:'Slur',key:'slur',mode:true},null,
-        {label:'b',title:'Bend',key:'b'},{label:'~',title:'Vibrato',key:'~'},
-        {label:'x',title:'Muted',key:'x'},{label:'t',title:'Tap',key:'t'},
-        {label:'r',title:'Release',key:'r'},{label:'P.M.',title:'Palm Mute',key:'PM'},
-        {label:'<>',title:'Harmonics',key:'harm'},{label:'()',title:'Ghost Note',key:'ghost'},null,
+        {label:'Slur',key:'slur',drag:false,title:'Drag between two notes on the same string'},null,
+        {label:'b',title:'Bend – drag onto a note (e.g. 7→7b)',key:'b',drag:true},
+        {label:'~',title:'Vibrato – drag onto a note',key:'~',drag:true},
+        {label:'x',title:'Muted/Dead note – drag onto a cell',key:'x',drag:true},
+        {label:'t',title:'Tap – drag onto a note',key:'t',drag:true},
+        {label:'r',title:'Release – drag onto a note',key:'r',drag:true},
+        {label:'P.M.',title:'Palm Mute – drag onto a note',key:'PM',drag:true},
+        {label:'<>',title:'Harmonics – wraps note in < > brackets',key:'harm',drag:true},
+        {label:'()',title:'Ghost Note – wraps note in ( ) brackets',key:'ghost',drag:true},null,
         {label:'↩',title:'Undo',key:'undo',cls:'undo-redo'},{label:'↪',title:'Redo',key:'redo',cls:'undo-redo'},
     ];
     symbols.forEach(sym=>{
         if(!sym){const sep=document.createElement('div');sep.className='tab-sym-sep';symBar.appendChild(sep);return;}
         const btn=document.createElement('button'); btn.className='tab-sym-btn'+(sym.cls?' '+sym.cls:'');
         btn.textContent=sym.label; btn.title=sym.title||sym.label;
+        // Draggable per-cell symbols
+        if(sym.drag){
+            btn.draggable=true;
+            btn.addEventListener('dragstart',e=>{
+                e.dataTransfer.setData('application/x-tab-sym',sym.key);
+                e.dataTransfer.effectAllowed='copy';
+                e.dataTransfer.setDragImage(btn,btn.offsetWidth/2,btn.offsetHeight/2);
+            });
+        }
         btn.addEventListener('click',()=>handleTabSymbol(sym.key, line, index, btn, block));
         symBar.appendChild(btn);
     });
@@ -485,7 +509,7 @@ function buildTabBlock(line, index) {
     // Body
     const body=document.createElement('div'); body.className='tab-body';
     const placeholder=document.createElement('div'); placeholder.className='tab-placeholder'; placeholder.textContent='Click a string position and type a fret number. Arrow keys to move.'; body.appendChild(placeholder);
-    const grid=document.createElement('div'); grid.className='tab-grid'; grid.style.position='relative';
+    const grid=document.createElement('div'); grid.className='tab-grid';
     const numCols=line.data[0]?line.data[0].length:TAB_COLS;
 
     line.tuning.forEach((str,row)=>{
@@ -520,44 +544,139 @@ function renderSlurArc(svg, sl) {
     svg.appendChild(path);
 }
 
+function applySymbolToCell(line, row, col, key) {
+    const val=line.data[row][col]||'';
+    pushTabState(line);
+    switch(key){
+        case 'b': line.data[row][col]=val?val.replace(/b$/,'')+'b':'b'; break;
+        case '~': line.data[row][col]=val?val.replace(/~$/,'')+'~':'~'; break;
+        case 'x': line.data[row][col]='x'; break;
+        case 't': line.data[row][col]=val?'t'+val.replace(/^t/,''):'t'; break;
+        case 'r': line.data[row][col]=val?val.replace(/r$/,'')+'r':'r'; break;
+        case 'PM': line.data[row][col]='PM'; break;
+        case 'harm': line.data[row][col]=val?'<'+val.replace(/[<>]/g,'')+'>':'<>'; break;
+        case 'ghost': line.data[row][col]=val?'('+val.replace(/[()]/g,'')+')':'()'; break;
+        default: line.data[row][col]=val+key;
+    }
+    scheduleSave();
+}
+
 function handleTabSymbol(key, line, lineIdx, btn, block) {
-    const focused=block.querySelector('.tab-cell:focus');
     if(key==='undo'){ if(tabUndo(line)){renderEditor();scheduleSave();} return; }
     if(key==='redo'){ if(tabRedo(line)){renderEditor();scheduleSave();} return; }
     if(key==='slur'){
-        // Toggle slur mode
-        if(state.slurMode && state.slurMode.lineIdx===lineIdx){ state.slurMode=null; btn.classList.remove('active'); return; }
-        state.slurMode={lineIdx, startRow:null, startCol:null}; btn.classList.add('active'); return;
+        // Toggle slur drag mode
+        if(state.slurMode && state.slurMode.lineIdx===lineIdx){
+            exitSlurMode(block); return;
+        }
+        exitSlurMode(); // clear any other block's slur mode
+        state.slurMode={lineIdx, startRow:null, startCol:null};
+        btn.classList.add('active');
+        block.classList.add('slur-active');
+        return;
     }
-    if(!focused) return;
+    // Per-cell symbols: apply to focused cell (click fallback)
+    const focused=block.querySelector('.tab-cell:focus');
+    if(!focused){ showTabToast(block,'Select a cell first, or drag the symbol onto a cell'); return; }
     const row=+focused.dataset.row, col=+focused.dataset.col;
-    const val=line.data[row][col]||'';
-    pushTabState(line);
-    if(key==='harm'){ line.data[row][col]=val?'<'+val.replace(/[<>]/g,'')+'>':'<>'; }
-    else if(key==='ghost'){ line.data[row][col]=val?'('+val.replace(/[()]/g,'')+')':'()'; }
-    else if(key==='PM'){ line.data[row][col]='PM'; }
-    else { line.data[row][col]=val+key; }
+    applySymbolToCell(line, row, col, key);
     focused.textContent=line.data[row][col]; focused.classList.add('has-note');
-    scheduleSave();
+    flashCell(focused);
+}
+
+function exitSlurMode(block) {
+    state.slurMode=null;
+    document.querySelectorAll('.tab-block.slur-active').forEach(b=>b.classList.remove('slur-active'));
+    document.querySelectorAll('.tab-sym-btn.active').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-cell.slur-start').forEach(c=>c.classList.remove('slur-start'));
+    document.querySelectorAll('.slur-preview').forEach(p=>p.remove());
+}
+
+function flashCell(cell) {
+    cell.style.transition='background 0.15s';
+    cell.style.background='rgba(240,136,62,0.4)';
+    setTimeout(()=>{ cell.style.background=''; cell.style.transition=''; },300);
+}
+
+function showTabToast(block, msg) {
+    const existing=block.querySelector('.tab-toast'); if(existing) existing.remove();
+    const t=document.createElement('div');
+    t.className='tab-toast';
+    t.style.cssText='position:absolute;top:8px;right:12px;padding:6px 12px;background:var(--surface-hover);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text-muted);z-index:20;pointer-events:none;opacity:1;transition:opacity 0.3s';
+    t.textContent=msg;
+    block.style.position='relative'; block.appendChild(t);
+    setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.remove(),300); },1800);
 }
 
 function setupTabCellEvents(cell, line, row, col) {
     cell.addEventListener('focus',()=>{ cell.textContent=line.data[row][col]||''; });
     cell.addEventListener('blur',()=>{ const v=line.data[row][col]||''; cell.textContent=v||'-'; if(v) cell.classList.add('has-note'); else cell.classList.remove('has-note'); });
-    cell.addEventListener('click',()=>{
-        // Slur mode: picking notes
-        if(state.slurMode && state.slurMode.lineIdx===parseInt(cell.dataset.lineIdx)){
-            const sm=state.slurMode;
-            if(sm.startRow===null){ sm.startRow=row; sm.startCol=col; cell.style.outline='2px solid var(--tab-active)'; return; }
-            // Second click: create slur
-            if(!line.slurs) line.slurs=[];
-            line.slurs.push({row:sm.startRow, startCol:Math.min(sm.startCol,col), endCol:Math.max(sm.startCol,col)});
-            state.slurMode=null;
-            // Remove active class from button
-            const block=cell.closest('.tab-block'); if(block) block.querySelectorAll('.tab-sym-btn.active').forEach(b=>b.classList.remove('active'));
-            renderEditor(); scheduleSave(); return;
+
+    // ── Symbol drag-and-drop target ──
+    cell.addEventListener('dragover',e=>{
+        if(e.dataTransfer.types.includes('application/x-tab-sym')){
+            e.preventDefault(); e.dataTransfer.dropEffect='copy';
+            cell.classList.add('sym-drop-hover');
         }
     });
+    cell.addEventListener('dragleave',()=>{ cell.classList.remove('sym-drop-hover'); });
+    cell.addEventListener('drop',e=>{
+        cell.classList.remove('sym-drop-hover');
+        const symKey=e.dataTransfer.getData('application/x-tab-sym');
+        if(!symKey) return;
+        e.preventDefault(); e.stopPropagation();
+        applySymbolToCell(line, row, col, symKey);
+        const v=line.data[row][col]||'';
+        cell.textContent=v||'-';
+        if(v) cell.classList.add('has-note'); else cell.classList.remove('has-note');
+        flashCell(cell);
+    });
+
+    // ── Slur drag mode: mousedown to start, mouseup to finish ──
+    cell.addEventListener('mousedown',e=>{
+        if(!state.slurMode || state.slurMode.lineIdx!==parseInt(cell.dataset.lineIdx)) return;
+        e.preventDefault();
+        const sm=state.slurMode;
+        sm.startRow=row; sm.startCol=col;
+        cell.classList.add('slur-start');
+        // Track mouse for preview arc
+        const block=cell.closest('.tab-block');
+        const svg=block?block.querySelector('.tab-slurs-svg'):null;
+        function onMove(ev){
+            if(!svg) return;
+            // Remove old preview
+            const old=svg.querySelector('.slur-preview'); if(old) old.remove();
+            // Find which cell the mouse is over
+            const target=document.elementFromPoint(ev.clientX, ev.clientY);
+            if(!target||!target.classList||!target.classList.contains('tab-cell')) return;
+            const tr=+target.dataset.row, tc=+target.dataset.col;
+            if(tr!==sm.startRow) return; // slurs stay on same string
+            const x1=Math.min(sm.startCol,tc)*24+12, x2=Math.max(sm.startCol,tc)*24+12, y=sm.startRow*20+4;
+            const mid=(x1+x2)/2, cp=y-14;
+            const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+            path.setAttribute('class','slur-preview');
+            path.setAttribute('d','M '+x1+','+y+' Q '+mid+','+cp+' '+x2+','+y);
+            svg.appendChild(path);
+        }
+        function onUp(ev){
+            document.removeEventListener('mousemove',onMove);
+            document.removeEventListener('mouseup',onUp);
+            cell.classList.remove('slur-start');
+            const target=document.elementFromPoint(ev.clientX, ev.clientY);
+            if(target&&target.classList&&target.classList.contains('tab-cell')){
+                const tr=+target.dataset.row, tc=+target.dataset.col;
+                if(tr===sm.startRow && tc!==sm.startCol){
+                    if(!line.slurs) line.slurs=[];
+                    line.slurs.push({row:sm.startRow, startCol:Math.min(sm.startCol,tc), endCol:Math.max(sm.startCol,tc)});
+                }
+            }
+            exitSlurMode(block);
+            renderEditor(); scheduleSave();
+        }
+        document.addEventListener('mousemove',onMove);
+        document.addEventListener('mouseup',onUp);
+    });
+
     cell.addEventListener('keydown',e=>{
         const nc=line.data[0].length, nr=line.tuning.length;
         if(e.key==='ArrowRight'){e.preventDefault();focusTabCell(cell,row,col+1,nc,nr);}
